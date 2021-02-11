@@ -1,7 +1,6 @@
 from typing import List
 import torch
 from torch.utils.data import Dataset, DataLoader
-import torchtext
 
 from torch.nn.functional import pad as torch_pad
 import penman
@@ -99,7 +98,6 @@ if __name__ == "__main__":
   
   dataloader = DataLoader(dataset, batch_size=3, collate_fn=collate_fn)
 
-  print('Created `torchtext_train_dataloader` with %d batches!'%len(dataloader))
   i = 0
   for batch in dataloader:
     if i == 2:

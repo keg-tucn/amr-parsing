@@ -43,8 +43,8 @@ class TrainingEntryTest(absltest.TestCase):
       ('i2', ':instance', 'industry'): [Alignment((3,), prefix='e.')]
     }
     g = penman.Graph(triples, top, epidata)
-    training_entry = TrainingEntry.construct_from_penman(
-      g, unalignment_tolerance=0)
+    training_entry = TrainingEntry(
+      [], g, unalignment_tolerance=0)
     expected_concepts = [
       'root', 'establish-01', 'model', 'industry', 'innovate-01']
     expected_mat = [
@@ -103,8 +103,8 @@ class TrainingEntryTest(absltest.TestCase):
       ('c', ':instance', 'close-10'): [Alignment((5,), prefix='e.')]
     }
     g = penman.Graph(triples, top, epidata)
-    training_entry = TrainingEntry.construct_from_penman(
-      g, unalignment_tolerance=0)
+    training_entry = TrainingEntry(
+      [], g, unalignment_tolerance=0)
     expected_concepts = [
       'root', 'this', 'issue-02', 'recommend-01', 'attract-01', 'close-10', 'attend-02', 'economist'
     ]
@@ -197,8 +197,8 @@ class TrainingEntryTest(absltest.TestCase):
       ('a', ':op2', 'p'): [],
       ('p', ':instance', 'patriotism'): [Alignment((23,), prefix='e.')]}
     g = penman.Graph(triples, top, epidata)
-    training_entry = TrainingEntry.construct_from_penman(
-      g, unalignment_tolerance=1)
+    training_entry = TrainingEntry(
+      [], g, unalignment_tolerance=1)
     expected_concepts = [
       'root', 'more', 'they', 'consider-01', 'person', 'betray-01', 'country',
       '"China"', 'name', '"China"', 'culture', 'tyrannize-01', 'cloak-01',

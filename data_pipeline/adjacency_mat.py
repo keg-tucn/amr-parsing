@@ -32,7 +32,9 @@ def get_edges(g: penman.Graph, ordered_concept_ids: List[int], fake_root_id: int
     src = triple[0]
     edge_label = triple[1]
     target = triple[2]
-    if src in variables and target in variables:
+    # Need to check that src is different from trgt to not add the 
+    # instance edge between the variable i and concept i.
+    if src in variables and target in variables and src!=target:
       edges[(src, target)] = edge_label
   # Add (src_var, constant) -> edge
   for concept_pos in range(len(ordered_concept_ids)):
@@ -74,8 +76,12 @@ def get_adjacency_mat(g: penman.Graph,
   for edge, edge_label in edges.items():
     src, trgt = edge
     # Go from var/constant -> triple id -> ordered concept position.
-    src = triple_to_concept[concepts_to_ids[src]]
-    trgt = triple_to_concept[concepts_to_ids[trgt]]
+    src_triple_id = concepts_to_ids[src]
+    trgt_triple_id = concepts_to_ids[trgt]
+    src = triple_to_concept[src_triple_id]
+    trgt = triple_to_concept[trgt_triple_id]
+    # src = triple_to_concept[concepts_to_ids[src]]
+    # trgt = triple_to_concept[concepts_to_ids[trgt]]
     adj_mat[src][trgt] = edge_label
   # Add root.
   top = triple_to_concept[concepts_to_ids[g.top]]

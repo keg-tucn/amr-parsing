@@ -3,7 +3,7 @@ from typing import List, Dict
 
 import penman
 from penman.graph import Triple
-
+from penman.surface import alignments
 # Extract from the AMR the nodes in inference order.
 # The nodes are represented by the position in the triples list (from the penman
 # amr representation).
@@ -30,8 +30,9 @@ def get_concept_ids(g: penman.Graph) -> List[int]:
   for triple_id in range(len(triples)):
     t = triples[triple_id]
     src = t[0]
+    rel = t[1]
     trgt = t[2]
-    if trgt not in variables and src!=trgt:
+    if trgt not in variables or rel == ':instance':
       filtered_triples_ids.append(triple_id)
   return filtered_triples_ids
 
@@ -86,6 +87,8 @@ def get_ordered_concepts_ids(g: penman.Graph, unalignment_tolerance = 0):
   result = sorted(aligned_concepts, key = lambda c: concepts_alignments[c][0])
   # Place unaligned concepts randomly.
   for c in unaligned_concepts:
-    random_index = randrange(len(result))
+    random_index = 0
+    if len(result) != 0:
+      random_index = randrange(len(result))
     result.insert(random_index, c)
   return result

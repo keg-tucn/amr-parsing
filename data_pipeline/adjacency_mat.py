@@ -27,7 +27,7 @@ def get_concepts_to_triple_ids(g: penman.Graph):
 def get_edges(g: penman.Graph, ordered_concept_ids: List[int], fake_root_id: int):
   variables = g.variables()
   edges = {}
-  # Add (src_var, trg_var) -> edge
+  # Add (src_var, trg_var) -> edge.
   for triple in g.triples:
     src = triple[0]
     edge_label = triple[1]
@@ -36,7 +36,7 @@ def get_edges(g: penman.Graph, ordered_concept_ids: List[int], fake_root_id: int
     # instance edge between the variable i and concept i.
     if src in variables and target in variables and src!=target:
       edges[(src, target)] = edge_label
-  # Add (src_var, constant) -> edge
+  # Add (src_var, constant) -> edge.
   for concept_pos in range(len(ordered_concept_ids)):
     penman_concept_id = ordered_concept_ids[concept_pos]
     if penman_concept_id != fake_root_id:

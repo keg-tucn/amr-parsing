@@ -106,7 +106,7 @@ class TrainingEntryTest(absltest.TestCase):
     training_entry = TrainingEntry(
       [], g, unalignment_tolerance=0)
     expected_concepts = [
-      'root', 'this', 'issue-02', 'recommend-01', 'attract-01', 'close-10', 'attend-02', 'economist'
+      'root', 'this', 'issue-02', 'recommend-01', 'attract-01', 'close-10','attend-02', 'economist'
     ]
     expected_mat = [
       [None, None, None, ':root', None, None, None, None],

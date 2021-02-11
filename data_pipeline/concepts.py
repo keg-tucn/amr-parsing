@@ -4,13 +4,6 @@ from typing import List, Dict
 import penman
 from penman.graph import Triple
 from penman.surface import alignments
-# Extract from the AMR the nodes in inference order.
-# The nodes are represented by the position in the triples list (from the penman
-# amr representation).
-
-# The amr triples contain in the target part [2] the concepts, but not only (
-# they can contain variables). The triples are first filtered in order to only
-# have triples associated with the concepts.
 
 
 def get_concept_ids(g: penman.Graph) -> List[int]:

@@ -7,8 +7,7 @@ ROOT_LABEL = ':root'
 
 def get_concepts_to_triple_ids(g: penman.Graph):
   """
-  Extract a dictionary concept -> triple id (where the 
-  concept is instanced).
+  Extract a dictionary concept -> triple id (where the concept is instanced).
   """
   variables = g.variables()
   concepts_to_ids = {}

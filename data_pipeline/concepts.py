@@ -59,7 +59,7 @@ def get_ordered_concepts_ids(g: penman.Graph, unalignment_tolerance = 0):
   Args:
     g: amr graph (in penman library representation).
     unalignment_tolerance: the percentage of concepts with no alignemnt info
-      allowed. If the amr has a larger percantage than allowed trhough this
+      allowed. If the amr has a larger percantage than allowed through this
       parameter, the function returns None. If the amr has a non-zero percentage
       of unaligned concepts but smaller than the tolerance, the unaligned
       concepts are placed at random in the revariables = [t[0] for t in triples]

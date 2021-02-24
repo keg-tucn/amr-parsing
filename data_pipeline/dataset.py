@@ -77,9 +77,9 @@ def collate_fn(batch):
     pad_size = max_adj_mat_size - len(adj_mat[0])
     padded_adj_mats.append(torch_pad(adj_mat, (0, pad_size, 0, pad_size)))
   new_batch = {
-    'sentence': torch.stack(padded_sentences),
-    'concepts': torch.stack(padded_concepts),
-    'adj_mat': torch.stack(padded_adj_mats)
+    'sentence': torch.transpose(torch.stack(padded_sentences),0,1),
+    'concepts': torch.transpose(torch.stack(padded_concepts),0,1),
+    'adj_mat': torch.transpose(torch.stack(padded_adj_mats),0,1)
   }
   return new_batch
 
@@ -103,4 +103,4 @@ if __name__ == "__main__":
       break
     i+=1
     print('Batch ',i)
-    print(batch)
+    print(batch['sentence'].shape)

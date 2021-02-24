@@ -11,7 +11,6 @@ NUM_LAYERS = 1
 #TODO: move this.
 BOS_IDX = 1
 
-#TODO: should packed sequences be used?
 class Encoder(nn.Module):
 
   def __init__(self, input_vocab_size):
@@ -20,10 +19,23 @@ class Encoder(nn.Module):
     self.lstm = nn.LSTM(EMB_DIM, HIDDEN_SIZE, NUM_LAYERS)
 
 
-  def forward(self, inputs: torch.Tensor):
+  def forward(self, inputs: torch.Tensor, input_lengths: torch.Tensor):
+    """
+    Args:
+        inputs (torch.Tensor): Inputs (input seq len, batch size).
+        input_lengths (torch.Tensor): (batch size).
+
+    Returns:
+        [type]: [description]
+    """
     embedded_inputs = self.embedding(inputs)
-    lstm_states = self.lstm(embedded_inputs)
-    return lstm_states
+    #TODO: see if enforce_sorted would help to be True (eg efficiency).
+    packed_embedded = nn.utils.rnn.pack_padded_sequence(
+      embedded_inputs, input_lengths, enforce_sorted = False)
+    packed_lstm_states, final_states = self.lstm(packed_embedded)
+    lstm_states, _ = nn.utils.rnn.pad_packed_sequence(
+      packed_lstm_states)
+    return lstm_states, final_states
 
 class AdditiveAttention(nn.Module):
   """
@@ -39,7 +51,18 @@ class AdditiveAttention(nn.Module):
 
   def forward(self,
               decoder_prev_state: torch.Tensor,
-              encoder_states: torch.Tensor):
+              encoder_states: torch.Tensor,
+              mask: torch.Tensor):
+    """
+
+    Args:
+        decoder_prev_state (torch.Tensor): TODO
+        encoder_states (torch.Tensor): TODO
+        mask (torch.Tensor): (batch size, input seq len)
+
+    Returns:
+        Context vector.
+    """
     seq_len = encoder_states.shape[0]
     # [ input seq len, batch_size, lstm size] -> [batch_size, input seq len, lstm size]
     encoder_states = encoder_states.transpose(0, 1)
@@ -55,6 +78,7 @@ class AdditiveAttention(nn.Module):
     attention_scores = self.attention_scores_proj(tanh_out)
     # From [batch size, seq len, 1] -> [batch size, seq len]
     attention_scores = torch.squeeze(attention_scores, dim=-1)
+    attention_scores = attention_scores.masked_fill(mask == 0, -float('inf'))
     attention_scores = torch.softmax(attention_scores, dim=-1)
     # [batch_size, input seq len, hidden size] -> [batch_size, hidden size, input seq len]
     encoder_states = encoder_states.transpose(1, 2)
@@ -96,7 +120,8 @@ class DecoderStep(nn.Module):
   def forward(self,
               input: torch.Tensor,
               previous_state: Tuple[torch.Tensor, torch.Tensor],
-              encoder_states: torch.Tensor):
+              encoder_states: torch.Tensor,
+              attention_mask: torch.Tensor):
     """
     Args:
       input: Decoder input (previous prediction or gold label), with shape
@@ -105,6 +130,7 @@ class DecoderStep(nn.Module):
         shape (batch size, hidden size).
       encoder_states: Encoder outputs with shape
         (input seq len, batch size, hidden size).
+      attention_mask: Attention mask (batch size, input seq len).
     Returns:
        A tuple of:
          decoder state with shape (batch size, hidden size)
@@ -115,7 +141,7 @@ class DecoderStep(nn.Module):
     previous_embedding = self.output_embedding(input)
     # Compute context vector.
     h = previous_state[0]
-    context_vector = self.additive_attention(h, encoder_states)
+    context_vector = self.additive_attention(h, encoder_states, attention_mask)
     # Compute lstm input.
     lstm_input =  torch.cat((previous_embedding, context_vector), dim=-1)
     # Compute new decoder state.
@@ -156,9 +182,11 @@ class Decoder(nn.Module):
     initial_h = self.initial_state_layer_h(enc_h)
     initial_c = self.initial_state_layer_h(enc_c)
     return (initial_h, initial_c)
+
   
   def forward(self,
               encoder_output: Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
+              attention_mask: torch.Tensor,
               decoder_inputs: torch.Tensor = None,
               max_out_length: int = None):
     """Bahdanau style decoder.
@@ -168,6 +196,8 @@ class Decoder(nn.Module):
         with shape (input seq len, batch size, hidden size) and the last states
         of the encoder (h, c), where both tensors have shapes
         (num_enc_layers, batch size, hidden size).
+      attention_mask: Attention mask (tensor of bools), shape
+        (batch size, input seq len).
       decoder_inputs (torch.Tensor): Decoder input for each step, with shape
         (output seq len, batch size). These should be sent on the train flow,
         and consist of the gold output sequence. On the inference flow, they
@@ -191,7 +221,7 @@ class Decoder(nn.Module):
       (output_seq_len, batch_size, self.output_vocab_size))
     for i in range(output_seq_len):
       decoder_state, predictions = self.decoder_step(
-        previous_token, decoder_state, encoder_states)
+        previous_token, decoder_state, encoder_states, attention_mask)
       # Get predicted token.
       predicted_token = torch.argmax(predictions, dim=-1)
       # Get the next decoder input, either from gold (if train & teacher forcing,
@@ -204,3 +234,37 @@ class Decoder(nn.Module):
       all_predictions[i] = predictions
 
     return all_predictions
+
+class Seq2seq(nn.Module):
+
+  def __init__(self, input_vocab_size: int, output_vocab_size: int):
+    super(Seq2seq, self).__init__()
+    self.encoder = Encoder(input_vocab_size)
+    self.decoder = Decoder(output_vocab_size)
+
+  @staticmethod
+  def create_mask(input_lengths: torch.Tensor, mask_seq_len: int):
+    arr_range = torch.arange(mask_seq_len)
+    mask = arr_range.unsqueeze(dim=0) < input_lengths.unsqueeze(dim=1)
+    return mask
+
+  def forward(self,
+              input_sequence: torch.Tensor,
+              input_lengths: torch.Tensor,
+              gold_output_sequence: torch.Tensor):
+    """Forward seq2seq.
+
+    Args:
+        input_sequence (torch.Tensor): Input sequence of shape 
+          (input seq len, batch size).
+        input_lengths: Lengths of the sequences in the batch (batch size).
+        gold_output_sequence: Output sequence (output seq len, batch size).
+    Returns:
+      predictions of shape (out seq len, batch size, output no of classes).
+    """
+    encoder_output = self.encoder(input_sequence, input_lengths)
+    input_seq_len = input_lengths.shape[0]
+    attention_mask = Seq2seq.create_mask(input_lengths, input_seq_len)
+    predictions = self.decoder(
+      encoder_output, attention_mask, gold_output_sequence)
+    return predictions

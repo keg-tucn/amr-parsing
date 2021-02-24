@@ -2,7 +2,7 @@ from absl.testing import absltest
 import numpy as np
 import torch
 
-from models import Encoder, AdditiveAttention, DecoderStep, Decoder
+from models import Encoder, AdditiveAttention, DecoderStep, Decoder, Seq2seq
 from models import EMB_DIM, HIDDEN_SIZE
 
 class ModelsTest(absltest.TestCase):
@@ -16,8 +16,9 @@ class ModelsTest(absltest.TestCase):
       [9, 0]
     ]
     inputs = torch.tensor(inputs)
+    seq_lengths = torch.tensor([3,2])
     encoder = Encoder(token_vocab_size)
-    outputs = encoder(inputs)
+    outputs = encoder(inputs, seq_lengths)
     encoder_states = outputs[0]
     last_encoder_state = outputs[1]
     h, c = last_encoder_state
@@ -28,10 +29,17 @@ class ModelsTest(absltest.TestCase):
   def test_additive_attention(self):
     batch_size = 5
     input_seq_len = 7
+    mask = torch.tensor([
+      [True, True, True, False, False, False, False],
+      [True, True, True, True, True, True, False],
+      [True, True, True, True, True, False, False],
+      [True, True, True, False, False, False, False],
+      [True, True, True, True, True, True, True]
+    ])
     decoder_prev_state = torch.zeros((batch_size, HIDDEN_SIZE))
     encoder_outputs = torch.zeros((input_seq_len, batch_size, HIDDEN_SIZE))
     attention_module = AdditiveAttention()
-    context = attention_module(decoder_prev_state, encoder_outputs)
+    context = attention_module(decoder_prev_state, encoder_outputs, mask)
     expected_shape = (batch_size, HIDDEN_SIZE)
     self.assertEqual(context.shape, expected_shape)
 
@@ -39,6 +47,11 @@ class ModelsTest(absltest.TestCase):
     output_vocab_size = 10
     batch_size = 3
     input_seq_len = 5
+    mask = torch.tensor([
+      [True, True, True, False, False],
+      [True, True, True, True, True],
+      [True, True, True, True, False]
+    ])
     decoder_input = torch.tensor([3, 7, 1])
     previous_state_h = torch.zeros(batch_size, HIDDEN_SIZE)
     previous_state_c = torch.zeros(batch_size, HIDDEN_SIZE)
@@ -46,7 +59,7 @@ class ModelsTest(absltest.TestCase):
     encoder_states = torch.zeros(input_seq_len, batch_size, HIDDEN_SIZE)
     decoder_step = DecoderStep(output_vocab_size)
     decoder_state, predictions = decoder_step(
-      decoder_input, previous_state, encoder_states)
+      decoder_input, previous_state, encoder_states, mask)
     self.assertEqual(decoder_state[0].shape, (batch_size, HIDDEN_SIZE))
     self.assertEqual(decoder_state[1].shape, (batch_size, HIDDEN_SIZE))
     self.assertEqual(predictions.shape, (batch_size, output_vocab_size))
@@ -57,6 +70,11 @@ class ModelsTest(absltest.TestCase):
     input_seq_len = 5
     output_seq_len = 7
     num_layers = 1
+    mask = torch.tensor([
+      [True, True, True, False, False],
+      [True, True, True, True, True],
+      [True, True, True, True, False]
+    ])
     encoder_states = torch.zeros(input_seq_len, batch_size, HIDDEN_SIZE)
     encoder_last_state = (
       torch.zeros(num_layers, batch_size, HIDDEN_SIZE),
@@ -65,7 +83,7 @@ class ModelsTest(absltest.TestCase):
     decoder_inputs = torch.full((output_seq_len, batch_size), 0)
     decoder_model = Decoder(output_vocab_size)
     decoder_model.train()
-    predictions = decoder_model(encoder_output, decoder_inputs)
+    predictions = decoder_model(encoder_output, mask, decoder_inputs)
     self.assertEqual(predictions.shape,
       (output_seq_len, batch_size, output_vocab_size))
 
@@ -75,6 +93,11 @@ class ModelsTest(absltest.TestCase):
     input_seq_len = 5
     max_output_seq_len = 7
     num_layers = 1
+    mask = torch.tensor([
+      [True, True, True, False, False],
+      [True, True, True, True, True],
+      [True, True, True, True, False]
+    ])
     encoder_states = torch.zeros(input_seq_len, batch_size, HIDDEN_SIZE)
     encoder_last_state = (
       torch.zeros(num_layers, batch_size, HIDDEN_SIZE),
@@ -83,9 +106,25 @@ class ModelsTest(absltest.TestCase):
     decoder_model = Decoder(output_vocab_size)
     decoder_model.eval()
     predictions = decoder_model(encoder_output,
+                                mask,
                                 max_out_length=max_output_seq_len)
     self.assertEqual(predictions.shape,
       (max_output_seq_len, batch_size, output_vocab_size))
+
+  def test_seq2seq_train(self):
+    batch_size = 3
+    input_seq_len = 4
+    output_seq_len = 5
+    input_vocab_size = 10
+    output_vocab_size = 20
+    inputs = torch.zeros((input_seq_len, batch_size)).type(torch.LongTensor)
+    input_lengths = torch.tensor([2, 3, 1])
+    gold_outputs = torch.zeros((output_seq_len, batch_size)).type(torch.LongTensor)
+    seq2seq_model = Seq2seq(input_vocab_size, output_vocab_size)
+    seq2seq_model.train()
+    predictions = seq2seq_model(inputs, input_lengths, gold_outputs)
+    self.assertEqual(predictions.shape,
+      (output_seq_len, batch_size, output_vocab_size))
 
 if __name__ == '__main__':
   absltest.main()

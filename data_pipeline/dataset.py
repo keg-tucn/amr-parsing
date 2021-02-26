@@ -11,6 +11,7 @@ from data_pipeline.vocab import Vocabs
 
 PAD = '<pad>' 
 UNK = '<unk>'
+PAD_IDX = 0
 
 class AMRDataset(Dataset):
   """
@@ -51,37 +52,41 @@ class AMRDataset(Dataset):
   def __getitem__(self, item):
     return self.sentences_list[item], self.concepts_list[item],  self.adj_mat_list[item]
 
-def collate_fn(batch):
-  batch_sentences = []
-  batch_concepts = []
-  batch_adj_mats = []
-  for entry in batch:
-    sentence, concepts, adj_mat = entry
-    batch_sentences.append(sentence)
-    batch_concepts.append(concepts)
-    batch_adj_mats.append(adj_mat)
-  # Get max lengths for padding.
-  max_sen_len = max([len(s) for s in batch_sentences])
-  max_concepts_len = max([len(s) for s in batch_concepts])
-  max_adj_mat_size = max([len(s) for s in batch_adj_mats])
-  # Pad sentences.
-  padded_sentences = [
-    torch_pad(s, (0, max_sen_len - len(s))) for s in batch_sentences]
-  # Pad concepts
-  padded_concepts = [
-    torch_pad(c, (0, max_concepts_len - len(c))) for c in batch_concepts]
-  # Pad adj matrices (pad on both dimensions).
-  padded_adj_mats = []
-  for adj_mat in batch_adj_mats:
-    # Since it's a square matrix, the padding is the same on both dimensions.
-    pad_size = max_adj_mat_size - len(adj_mat[0])
-    padded_adj_mats.append(torch_pad(adj_mat, (0, pad_size, 0, pad_size)))
-  new_batch = {
-    'sentence': torch.transpose(torch.stack(padded_sentences),0,1),
-    'concepts': torch.transpose(torch.stack(padded_concepts),0,1),
-    'adj_mat': torch.transpose(torch.stack(padded_adj_mats),0,1)
-  }
-  return new_batch
+  @staticmethod
+  def collate_fn(batch):
+    batch_sentences = []
+    batch_concepts = []
+    batch_adj_mats = []
+    sentence_lengths = []
+    for entry in batch:
+      sentence, concepts, adj_mat = entry
+      batch_sentences.append(sentence)
+      batch_concepts.append(concepts)
+      batch_adj_mats.append(adj_mat)
+      sentence_lengths.append(len(sentence))
+    # Get max lengths for padding.
+    max_sen_len = max([len(s) for s in batch_sentences])
+    max_concepts_len = max([len(s) for s in batch_concepts])
+    max_adj_mat_size = max([len(s) for s in batch_adj_mats])
+    # Pad sentences.
+    padded_sentences = [
+      torch_pad(s, (0, max_sen_len - len(s))) for s in batch_sentences]
+    # Pad concepts
+    padded_concepts = [
+      torch_pad(c, (0, max_concepts_len - len(c))) for c in batch_concepts]
+    # Pad adj matrices (pad on both dimensions).
+    padded_adj_mats = []
+    for adj_mat in batch_adj_mats:
+      # Since it's a square matrix, the padding is the same on both dimensions.
+      pad_size = max_adj_mat_size - len(adj_mat[0])
+      padded_adj_mats.append(torch_pad(adj_mat, (0, pad_size, 0, pad_size)))
+    new_batch = {
+      'sentence': torch.transpose(torch.stack(padded_sentences),0,1),
+      'sentence_lengts': torch.tensor(sentence_lengths),
+      'concepts': torch.transpose(torch.stack(padded_concepts),0,1),
+      'adj_mat': torch.transpose(torch.stack(padded_adj_mats),0,1)
+    }
+    return new_batch
 
 #TODO: remove this and add tests.
 if __name__ == "__main__":
@@ -95,7 +100,7 @@ if __name__ == "__main__":
 
   dataset = AMRDataset(paths, vocabs)
   
-  dataloader = DataLoader(dataset, batch_size=3, collate_fn=collate_fn)
+  dataloader = DataLoader(dataset, batch_size=3, collate_fn=AMRDataset.collate_fn)
 
   i = 0
   for batch in dataloader:

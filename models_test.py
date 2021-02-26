@@ -26,6 +26,25 @@ class ModelsTest(absltest.TestCase):
     self.assertEqual(h.shape, (num_layers, 2, HIDDEN_SIZE))
     self.assertEqual(c.shape, (num_layers, 2, HIDDEN_SIZE))
 
+  def test_encoder_bilstm(self):
+    num_layers = 1
+    token_vocab_size = 10
+    inputs = [
+      [3, 5],
+      [7, 2],
+      [9, 0]
+    ]
+    inputs = torch.tensor(inputs)
+    seq_lengths = torch.tensor([3,2])
+    encoder = Encoder(token_vocab_size, use_bilstm=True)
+    outputs = encoder(inputs, seq_lengths)
+    encoder_states = outputs[0]
+    last_encoder_state = outputs[1]
+    h, c = last_encoder_state
+    self.assertEqual(encoder_states.shape, (3, 2, 2*HIDDEN_SIZE))
+    self.assertEqual(h.shape, (2*num_layers, 2, HIDDEN_SIZE))
+    self.assertEqual(c.shape, (2*num_layers, 2, HIDDEN_SIZE))
+
   def test_additive_attention(self):
     batch_size = 5
     input_seq_len = 7

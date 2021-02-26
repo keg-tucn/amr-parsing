@@ -13,10 +13,11 @@ BOS_IDX = 1
 
 class Encoder(nn.Module):
 
-  def __init__(self, input_vocab_size):
+  def __init__(self, input_vocab_size, use_bilstm=False):
     super(Encoder, self).__init__()
     self.embedding = nn.Embedding(input_vocab_size, EMB_DIM)
-    self.lstm = nn.LSTM(EMB_DIM, HIDDEN_SIZE, NUM_LAYERS)
+    self.lstm = nn.LSTM(
+      EMB_DIM, HIDDEN_SIZE, NUM_LAYERS, bidirectional=use_bilstm)
 
 
   def forward(self, inputs: torch.Tensor, input_lengths: torch.Tensor):

@@ -3,6 +3,7 @@ import numpy as np
 import torch
 
 from models import Encoder, AdditiveAttention, DecoderStep, Decoder, Seq2seq
+from models import DenseMLP
 from models import EMB_DIM, HIDDEN_SIZE
 
 class ModelsTest(absltest.TestCase):
@@ -144,6 +145,15 @@ class ModelsTest(absltest.TestCase):
     predictions = seq2seq_model(inputs, input_lengths, gold_outputs)
     self.assertEqual(predictions.shape,
       (output_seq_len, batch_size, output_vocab_size))
+
+  def test_dense_mlp(self):
+    node_repr_size = 5
+    batch_size = 3
+    dense_mlp = DenseMLP(node_repr_size=node_repr_size)
+    parent = torch.zeros((batch_size, node_repr_size))
+    child = torch.zeros((batch_size, node_repr_size))
+    edge_repr = dense_mlp(parent, child)
+    self.assertEqual(edge_repr.shape, (batch_size, 1))
 
 if __name__ == '__main__':
   absltest.main()

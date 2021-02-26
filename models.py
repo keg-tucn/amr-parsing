@@ -8,6 +8,8 @@ EMB_DIM = 50
 HIDDEN_SIZE = 40
 NUM_LAYERS = 1
 
+DENSE_MLP_HIDDEN_SIZE = 30
+
 #TODO: move this.
 BOS_IDX = 1
 
@@ -287,3 +289,25 @@ class Seq2seq(nn.Module):
       logits, predictions = self.decoder(
         encoder_output, attention_mask, max_out_length = max_out_length)
     return logits, predictions
+
+class DenseMLP(nn.Module):
+  """
+  MLP from Dependency parsing as Head Selection.
+  """
+
+  def __init__(self,
+               node_repr_size:int = 2 * HIDDEN_SIZE):
+    super(DenseMLP, self).__init__()
+    self.Ua = nn.Linear(node_repr_size, DENSE_MLP_HIDDEN_SIZE, bias=False)
+    self.Wa = nn.Linear(node_repr_size, DENSE_MLP_HIDDEN_SIZE, bias=False)
+    self.va = nn.Linear(DENSE_MLP_HIDDEN_SIZE, 1, bias=False)
+
+
+  def forward(self, parent: torch.Tensor, child: torch.Tensor):
+    """
+    Args:
+        parent: Parent node representation (batch size, node repr size).
+        child: Child node representation (batch size, node repr size).
+    """
+    edge_score = self.va(torch.tanh(self.Ua(parent) + self.Wa(child)))
+    return edge_score

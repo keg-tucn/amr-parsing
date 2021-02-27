@@ -340,7 +340,5 @@ class EdgeScoring(nn.Module):
         parent = concepts[:,i]
         child = concepts[:,j]
         score = self.dense_mlp(parent, child)
-        print('Score shape', score.shape)
-        print('Scores i,j shape', scores[:,i,j].shape)
         scores[:,i,j] = score
     return scores

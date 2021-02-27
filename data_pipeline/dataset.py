@@ -7,8 +7,10 @@ import penman
 from penman.models import noop
 from data_pipeline.training_entry import TrainingEntry
 from data_pipeline.data_reading import extract_triples, get_paths
+from data_pipeline.vocab import Vocabs
 
 PAD = '<pad>' 
+UNK = '<unk>'
 
 class AMRDataset(Dataset):
   """
@@ -16,11 +18,8 @@ class AMRDataset(Dataset):
   of concepts and adjacency matrix.
   """
 
-  def __init__(self, paths: List[str]):
+  def __init__(self, paths: List[str], vocabs: Vocabs):
     super(AMRDataset, self).__init__()
-    self.token_vocab: Dict[str, int] = {PAD: 0}
-    self.concept_vocab: Dict[str, int] = {PAD: 0}
-    self.relation_vocab: Dict[str, int] = {None: 0}
     self.sentences_list= []
     self.concepts_list = []
     self.adj_mat_list = []
@@ -33,14 +32,9 @@ class AMRDataset(Dataset):
           sentence=sentence.split(),
           g=amr_penman_graph,
           unalignment_tolerance=1)
-        # Update vocabularies.
-        self.token_vocab, self.concept_vocab, self.relation_vocab = \
-          training_entry.update_vocabs(self.token_vocab,
-                                       self.concept_vocab,
-                                       self.relation_vocab)
         # Process the training entry (str -> vocab ids).
-        sentence, concepts, adj_mat = training_entry.process(
-          self.token_vocab, self.concept_vocab, self.relation_vocab)
+        sentence, concepts, adj_mat = training_entry.numericalize(
+          vocabs.token_vocab, vocabs.concept_vocab, vocabs.relation_vocab)
         # Convert to pytorch tensors.
         #TODO: should I use pytorch or numpy tensors?
         sentence = torch.tensor(sentence, dtype=torch.int)
@@ -94,7 +88,12 @@ if __name__ == "__main__":
   subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
              'mt09sdl', 'proxy', 'wb', 'xinhua']
   paths = get_paths('training', subsets)
-  dataset = AMRDataset(paths)
+
+  #TODO: a special token like 'no-relation' instead of None.
+  special_words = ([PAD, UNK], [PAD, UNK], [PAD, UNK, None])
+  vocabs = Vocabs(paths, UNK, special_words, min_frequencies=(1, 1, 1))
+
+  dataset = AMRDataset(paths, vocabs)
   
   dataloader = DataLoader(dataset, batch_size=3, collate_fn=collate_fn)
 

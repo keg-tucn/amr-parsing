@@ -36,39 +36,22 @@ class TrainingEntry():
     # Return training entry.
     return ordered_concepts, adj_mat
 
-  def update_vocabs(self,
-                    token_vocab: Dict[str, int],
-                    concept_vocab: Dict[str, int],
-                    relation_vocab: Dict[str, int]):
+  def get_labels(self):
+    """Returns the tokens, concepts and relations in a training entry.
     """
-    Update the three vocabularies with elements from the training entry.
-    Args:
-      token_vocab: Vocabulary of sentence tokens.
-      concept_vocab: Vocabulary of concepts.
-      relation_vocab: Vocabulary of arc relations.
-    Returns:
-      A tuple of the updated vocabularies:
-      (token_vocab, concept_vocab, relation_vocab).
-    """
-    # Update token vocab.
-    for token in self.sentence:
-      if token not in token_vocab.keys():
-        token_vocab.update({token: len(token_vocab.keys())})
-    # Update concept vocab.
-    for concept in self.concepts:
-      if concept not in concept_vocab.keys():
-        concept_vocab.update({concept: len(concept_vocab.keys())})
-    # Update relation vocab.
+    tokens = self.sentence
+    concepts = self.concepts
+    relations = []
     for row in self.adjacency_mat:
       for relation in row:
-        if relation != None and relation not in relation_vocab.keys():
-          relation_vocab.update({relation: len(relation_vocab.keys())})
-    return token_vocab, concept_vocab, relation_vocab
+        if relation != None:
+          relations.append(relation)
+    return tokens, concepts, relations
 
-  def process(self,
-              token_vocab: Dict[str, int],
-              concept_vocab: Dict[str, int],
-              relation_vocab: Dict[str, int]):
+  def numericalize(self,
+                   token_vocab: Dict[str, int],
+                   concept_vocab: Dict[str, int],
+                   relation_vocab: Dict[str, int]):
     """
     Processes the train entry into lists of integeres that can be easily converted
     into tensors. For the adjacency matrix 0 will be used in case the relation

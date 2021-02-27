@@ -308,6 +308,39 @@ class DenseMLP(nn.Module):
     Args:
         parent: Parent node representation (batch size, node repr size).
         child: Child node representation (batch size, node repr size).
+    Returns
+      edge_score: (batch size).
     """
     edge_score = self.va(torch.tanh(self.Ua(parent) + self.Wa(child)))
-    return edge_score
+    # Return score of (batch size), not (batch size, 1).
+    return edge_score[:,0]
+
+class EdgeScoring(nn.Module):
+
+  def __init__(self):
+    super(EdgeScoring, self).__init__()
+    self.dense_mlp = DenseMLP()
+
+  def forward(self, concepts: torch.tensor):
+    """
+    Args:
+        concepts: Sequence of ordered concepts, shape
+          (batch size, seq len, concept size).
+        The first concept is the fake root concept.
+    Returns:
+      scores between each pair of concepts, shape
+      (batch size, no of concepts, no of concepts).
+    """
+    batch_size, no_of_concepts, _ = concepts.shape
+    scores = torch.zeros((batch_size, no_of_concepts, no_of_concepts))
+    no_concepts = concepts.shape[1]
+    #TODO: think if this can be done without loops.
+    for i in range(no_concepts):
+      for j in range(no_concepts):
+        parent = concepts[:,i]
+        child = concepts[:,j]
+        score = self.dense_mlp(parent, child)
+        print('Score shape', score.shape)
+        print('Scores i,j shape', scores[:,i,j].shape)
+        scores[:,i,j] = score
+    return scores

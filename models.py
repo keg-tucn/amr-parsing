@@ -29,7 +29,7 @@ class Encoder(nn.Module):
         input_lengths (torch.Tensor): (batch size).
 
     Returns:
-        [type]: [description]
+        encodings (input seq len, batch size).
     """
     embedded_inputs = self.embedding(inputs)
     #TODO: see if enforce_sorted would help to be True (eg efficiency).
@@ -324,4 +324,32 @@ class EdgeScoring(nn.Module):
         child = concepts[:,j]
         score = self.dense_mlp(parent, child)
         scores[:,i,j] = score
+    return scores
+
+class HeadsSelection(nn.Module):
+  """
+  Module for training heads selection separately.
+  The input is a list of numericalized concepts & the output is a matrix of
+  edge scores.
+  """
+
+  def __init__(self, concept_vocab_size):
+    super(HeadsSelection, self).__init__()
+    self.encoder = Encoder(concept_vocab_size, use_bilstm=True)
+    self.edge_scoring = EdgeScoring()
+
+  def forward(self, concepts: torch.tensor, concepts_lengths: torch.tensor):
+    """
+    Args:
+      concepts (torch.tensor): Concepts (seq len, batch size).
+      concepts_lengths (torch.tensor): Concept sequences lengths (batch size).
+
+    Returns:
+      Edge scores (batch size, seq len, seq len).
+    """
+    encoded_concepts, _ = self.encoder(concepts, concepts_lengths)
+    # Go from (seq len, batch size, node size) -> (batch size, seq len, node size).
+    encoded_concepts = encoded_concepts.transpose(0, 1)
+    scores = self.edge_scoring(encoded_concepts)
+    # TODO: maybe mask scores here.
     return scores

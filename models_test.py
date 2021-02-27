@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 from models import Encoder, AdditiveAttention, DecoderStep, Decoder, Seq2seq
-from models import DenseMLP, EdgeScoring
+from models import DenseMLP, EdgeScoring, HeadsSelection
 from models import EMB_DIM, HIDDEN_SIZE
 
 class ModelsTest(absltest.TestCase):
@@ -206,6 +206,23 @@ class ModelsTest(absltest.TestCase):
     edge_scoring = EdgeScoring()
     scores = edge_scoring(concepts)
     self.assertEqual(scores.shape, (batch_size, no_of_concepts, no_of_concepts))
+
+  def test_heads_selection(self):
+    batch_size = 2
+    concept_vocab_size = 10
+    seq_len = 3
+    concepts = [
+      #batch ex 1 (amr1)
+      [1, 3, 3],
+      #batch ex 2 (amr2)
+      [4, 5, 0]
+    ]
+    concepts = torch.tensor(concepts)
+    concepts = concepts.transpose(0,1)
+    concepts_lengths = torch.tensor([3, 2])
+    head_selection = HeadsSelection(concept_vocab_size)
+    scores = head_selection(concepts, concepts_lengths)
+    self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
 
 if __name__ == '__main__':
   absltest.main()

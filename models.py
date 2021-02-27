@@ -9,6 +9,7 @@ HIDDEN_SIZE = 50
 NUM_LAYERS = 1
 
 DENSE_MLP_HIDDEN_SIZE = 30
+SAMPLING_RATIO = 2
 
 #TODO: move this.
 BOS_IDX = 1
@@ -337,6 +338,70 @@ class HeadsSelection(nn.Module):
     super(HeadsSelection, self).__init__()
     self.encoder = Encoder(concept_vocab_size, use_bilstm=True)
     self.edge_scoring = EdgeScoring()
+
+  @staticmethod
+  def create_padding_mask(concepts_lengths: torch.tensor, seq_len: int):
+    arr_range = torch.arange(seq_len)
+    # Create sequence mask.
+    mask_1d = arr_range.unsqueeze(dim=0) < concept_lengths.unsqueeze(dim=1)
+    # Create 2d mask for each element in the batch by multiplying a repeated
+    # vector with its transpose.
+    x = mask_1d.unsqueeze(1).repeat(1, seq_len, 1)
+    y = x.transpose(1, 2)
+    mask = x * y
+    return mask
+
+  @staticmethod
+  def create_sampling_mask(gold_adj_mat: torch.tensor,
+                           sampling_ratio: int = SAMPLING_RATIO):
+    """Create sampling mask (for balancing negative and positive classes).
+    Args:
+      gold_adj_mat: Gold adjacency matrix (batch size, seq len, seq len).
+      sampling_ratio: How many negative edges should be sampled for a positive
+        edge. We sample this at concept level (if a concept has n heads, we
+        sample sampling_ration * n non-heads).
+    Returns:
+      Mask of boolean values with shape (batch size, seq len, seq len).
+    """
+    pass
+
+  @staticmethod
+  def create_fake_root_mask(batch_size, seq_len, root_idx = 0):
+    """Creates a fake root mask. A fake root is added to the concept list to 
+    be able to predict the amr top, but the fake root should not be a child, only
+    a parent. To enforce this, the column of the root is masked out.
+    Returns:
+      Mask of boolean values with shape (batch size, seq len, seq len).
+    """
+    mask = torch.full((batch_size, seq_len, seq_len), True)
+    mask[:,:,root_idx] = False
+    return mask
+
+  @staticmethod
+  def create_mask(seq_len: int,
+                  concepts_lengths: torch.tensor,
+                  gold_adj_mat = None):
+    """
+    Creates a mask for masking scores (the scores will be masked with -inf to
+    obtain 0 when passing through the sigmoid). This mask will be a mask of
+    boolean values:
+      False: masking out
+      True: masking in
+    Need to mask several things:
+      padding -> the sequences of concepts are padded.
+      sampling -> we don't want to use all non-existing arcs, we will "sample"
+        from them by masking out the ones we don't want to use.
+      fake root -> the fake root should not have any parent.
+    """
+    batch_size = concepts_lengths.shape[0]
+    mask = HeadsSelection.create_padding_mask(concepts_lengths, seq_len)
+    if self.training:
+      sampling_mask = HeadsSelection.create_sampling_mask(gold_adj_mat)
+      mask = mask * sampling_mask
+    fake_root_mask = HeadsSelection.create_fake_root_mask(
+      batch_size, seq_len)
+    mask = mask * fake_root_mask
+    return mask
 
   def forward(self, concepts: torch.tensor, concepts_lengths: torch.tensor):
     """

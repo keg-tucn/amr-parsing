@@ -19,8 +19,9 @@ class AMRDataset(Dataset):
   of concepts and adjacency matrix.
   """
 
-  def __init__(self, paths: List[str], vocabs: Vocabs):
+  def __init__(self, paths: List[str], vocabs: Vocabs, device: str):
     super(AMRDataset, self).__init__()
+    self.device = device
     self.sentences_list= []
     self.concepts_list = []
     self.adj_mat_list = []
@@ -38,9 +39,9 @@ class AMRDataset(Dataset):
           vocabs.token_vocab, vocabs.concept_vocab, vocabs.relation_vocab)
         # Convert to pytorch tensors.
         #TODO: should I use pytorch or numpy tensors?
-        sentence = torch.tensor(sentence, dtype=torch.int)
-        concepts = torch.tensor(concepts, dtype=torch.int)
-        adj_mat = torch.tensor(adj_mat, dtype=torch.int)
+        sentence = torch.tensor(sentence, dtype=torch.long)
+        concepts = torch.tensor(concepts, dtype=torch.long)
+        adj_mat = torch.tensor(adj_mat, dtype=torch.long)
         # Collect the data.
         self.sentences_list.append(sentence)
         self.concepts_list.append(concepts)
@@ -52,8 +53,7 @@ class AMRDataset(Dataset):
   def __getitem__(self, item):
     return self.sentences_list[item], self.concepts_list[item],  self.adj_mat_list[item]
 
-  @staticmethod
-  def collate_fn(batch):
+  def collate_fn(self, batch):
     batch_sentences = []
     batch_concepts = []
     batch_adj_mats = []
@@ -80,11 +80,14 @@ class AMRDataset(Dataset):
       # Since it's a square matrix, the padding is the same on both dimensions.
       pad_size = max_adj_mat_size - len(adj_mat[0])
       padded_adj_mats.append(torch_pad(adj_mat, (0, pad_size, 0, pad_size)))
+    #TODO: maybe by default do not put (seq_len, batch size) but have some
+    # processing method for doing so after loading the data.
     new_batch = {
-      'sentence': torch.transpose(torch.stack(padded_sentences),0,1),
+      'sentence': torch.transpose(torch.stack(padded_sentences),0,1).to(self.device),
+      # This is left on the cpu for 'pack_padded_sequence'.
       'sentence_lengts': torch.tensor(sentence_lengths),
-      'concepts': torch.transpose(torch.stack(padded_concepts),0,1),
-      'adj_mat': torch.transpose(torch.stack(padded_adj_mats),0,1)
+      'concepts': torch.transpose(torch.stack(padded_concepts),0,1).to(self.device),
+      'adj_mat': torch.transpose(torch.stack(padded_adj_mats),0,1).to(self.device)
     }
     return new_batch
 
@@ -100,7 +103,7 @@ if __name__ == "__main__":
 
   dataset = AMRDataset(paths, vocabs)
   
-  dataloader = DataLoader(dataset, batch_size=3, collate_fn=AMRDataset.collate_fn)
+  dataloader = DataLoader(dataset, batch_size=3, collate_fn=dataset.collate_fn)
 
   i = 0
   for batch in dataloader:

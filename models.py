@@ -27,8 +27,16 @@ class Encoder(nn.Module):
 
     Returns:
         [type]: [description]
+    Observation:
+      During packing the input lengths are taken into consideration and the lstm
+      will return a sequence with seq length the maximum length in the
+      input_lengths field, regardless of what the length with padding actually
+      is.
     """
+    # print('inputs device', inputs.device)
+    # print('input_lengths device', input_lengths.device)
     embedded_inputs = self.embedding(inputs)
+    # print('embedded_inputs device', embedded_inputs.device)
     #TODO: see if enforce_sorted would help to be True (eg efficiency).
     packed_embedded = nn.utils.rnn.pack_padded_sequence(
       embedded_inputs, input_lengths, enforce_sorted = False)
@@ -56,13 +64,14 @@ class AdditiveAttention(nn.Module):
     """
 
     Args:
-        decoder_prev_state (torch.Tensor): TODO
-        encoder_states (torch.Tensor): TODO
-        mask (torch.Tensor): (batch size, input seq len)
+        decoder_prev_state: shape (batch size, hidden size).
+        encoder_states: shape (input_seq_len, batch_size, HIDDEN_SIZE).
+        mask: shape (batch size, input seq len)
 
     Returns:
         Context vector.
     """
+    
     seq_len = encoder_states.shape[0]
     # [ input seq len, batch_size, lstm size] -> [batch_size, input seq len, lstm size]
     encoder_states = encoder_states.transpose(0, 1)
@@ -98,8 +107,8 @@ class DecoderClassifier(nn.Module):
     logits = self.linear_layer(classifier_input)
     # Use softmax for now, it can be experimented with other activation
     # functions.
-    predictions = torch.softmax(logits, dim=-1)
-    return predictions
+    # predictions = torch.softmax(logits, dim=-1) -- softmax used in the loss fct
+    return logits
 
 class DecoderStep(nn.Module):
   """
@@ -158,8 +167,10 @@ class Decoder(nn.Module):
 
   def __init__(self,
                output_vocab_size: int,
-               teacher_forcing_ratio: float = 0.5):
+               teacher_forcing_ratio: float = 0.5,
+               device: str = "cpu"):
     super(Decoder, self).__init__()
+    self.device = device
     self.output_vocab_size = output_vocab_size
     self.teacher_forcing_ratio = teacher_forcing_ratio
     self.decoder_step = DecoderStep(output_vocab_size)
@@ -215,15 +226,18 @@ class Decoder(nn.Module):
     # through a linear layer.
     decoder_state = self.compute_initial_decoder_state(encoder_output[1])
     # Create a batch of initial tokens.
-    previous_token = torch.full((batch_size,), BOS_IDX)
+    previous_token = torch.full((batch_size,), BOS_IDX).to(device=self.device)
     
-    all_predictions = torch.zeros(
-      (output_seq_len, batch_size, self.output_vocab_size))
+    all_logits = torch.zeros(
+      (output_seq_len, batch_size, self.output_vocab_size)).to(device=self.device)
+    all_predictions = torch.zeros((output_seq_len, batch_size))
     for i in range(output_seq_len):
-      decoder_state, predictions = self.decoder_step(
+      decoder_state, logits = self.decoder_step(
         previous_token, decoder_state, encoder_states, attention_mask)
       # Get predicted token.
-      predicted_token = torch.argmax(predictions, dim=-1)
+      step_predictions = torch.softmax(logits, dim=-1)
+      predicted_token = torch.argmax(step_predictions, dim=-1)
+      all_predictions[i] = predicted_token
       # Get the next decoder input, either from gold (if train & teacher forcing,
       # or use the predicted token).
       teacher_forcing = random.random() < self.teacher_forcing_ratio
@@ -231,21 +245,22 @@ class Decoder(nn.Module):
         previous_token = decoder_inputs[i]
       else:
         previous_token = predicted_token
-      all_predictions[i] = predictions
+      all_logits[i] = logits
 
-    return all_predictions
+    return all_logits, all_predictions
 
 class Seq2seq(nn.Module):
 
-  def __init__(self, input_vocab_size: int, output_vocab_size: int):
+  def __init__(self, input_vocab_size: int, output_vocab_size: int, device="cpu"):
     super(Seq2seq, self).__init__()
     self.encoder = Encoder(input_vocab_size)
-    self.decoder = Decoder(output_vocab_size)
+    self.decoder = Decoder(output_vocab_size, device=device)
+    self.device = device
 
-  @staticmethod
-  def create_mask(input_lengths: torch.Tensor, mask_seq_len: int):
+  def create_mask(self, input_lengths: torch.Tensor, mask_seq_len: int):
     arr_range = torch.arange(mask_seq_len)
     mask = arr_range.unsqueeze(dim=0) < input_lengths.unsqueeze(dim=1)
+    mask = mask.to(self.device)
     return mask
 
   def forward(self,
@@ -263,8 +278,8 @@ class Seq2seq(nn.Module):
       predictions of shape (out seq len, batch size, output no of classes).
     """
     encoder_output = self.encoder(input_sequence, input_lengths)
-    input_seq_len = input_lengths.shape[0]
-    attention_mask = Seq2seq.create_mask(input_lengths, input_seq_len)
-    predictions = self.decoder(
+    input_seq_len = input_sequence.shape[0]
+    attention_mask = self.create_mask(input_lengths, input_seq_len)
+    logits, predictions = self.decoder(
       encoder_output, attention_mask, gold_output_sequence)
-    return predictions
+    return logits, predictions

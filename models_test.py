@@ -6,6 +6,7 @@ from models import Encoder, AdditiveAttention, DecoderStep, Decoder, Seq2seq
 from models import EMB_DIM, HIDDEN_SIZE
 
 class ModelsTest(absltest.TestCase):
+    
 
   def test_encoder(self):
     num_layers = 1
@@ -13,18 +14,43 @@ class ModelsTest(absltest.TestCase):
     inputs = [
       [3, 5],
       [7, 2],
+      [9, 0],
       [9, 0]
     ]
     inputs = torch.tensor(inputs)
-    seq_lengths = torch.tensor([3,2])
+    seq_lengths = torch.tensor([4,2])
     encoder = Encoder(token_vocab_size)
     outputs = encoder(inputs, seq_lengths)
     encoder_states = outputs[0]
     last_encoder_state = outputs[1]
     h, c = last_encoder_state
-    self.assertEqual(encoder_states.shape, (3, 2, HIDDEN_SIZE))
+    self.assertEqual(encoder_states.shape, (4, 2, HIDDEN_SIZE))
     self.assertEqual(h.shape, (num_layers, 2, HIDDEN_SIZE))
     self.assertEqual(c.shape, (num_layers, 2, HIDDEN_SIZE))
+
+  def test_encoder_cuda(self):
+    if torch.cuda.is_available():
+      device = "cuda"
+      num_layers = 1
+      token_vocab_size = 10
+      inputs = [
+        [3, 5],
+        [7, 2],
+        [9, 0],
+        [9, 0]
+      ]
+      inputs = torch.tensor(inputs).to(device)
+      # This seems to have to stay on the cpu.
+      seq_lengths = torch.tensor([4,2])
+      encoder = Encoder(token_vocab_size).to(device)
+      outputs = encoder(inputs, seq_lengths)
+      encoder_states = outputs[0]
+      last_encoder_state = outputs[1]
+      h, c = last_encoder_state
+      self.assertEqual(encoder_states.shape, (4, 2, HIDDEN_SIZE))
+      self.assertEqual(h.shape, (num_layers, 2, HIDDEN_SIZE))
+      self.assertEqual(c.shape, (num_layers, 2, HIDDEN_SIZE))
+      self.assertEqual(encoder_states.device.type, 'cuda')
 
   def test_additive_attention(self):
     batch_size = 5
@@ -83,9 +109,10 @@ class ModelsTest(absltest.TestCase):
     decoder_inputs = torch.full((output_seq_len, batch_size), 0)
     decoder_model = Decoder(output_vocab_size)
     decoder_model.train()
-    predictions = decoder_model(encoder_output, mask, decoder_inputs)
-    self.assertEqual(predictions.shape,
+    logits, predictions = decoder_model(encoder_output, mask, decoder_inputs)
+    self.assertEqual(logits.shape,
       (output_seq_len, batch_size, output_vocab_size))
+    self.assertEqual(predictions.shape, (output_seq_len, batch_size))
 
   def test_decoder_eval(self):
     output_vocab_size = 10
@@ -105,11 +132,12 @@ class ModelsTest(absltest.TestCase):
     encoder_output = (encoder_states, encoder_last_state)
     decoder_model = Decoder(output_vocab_size)
     decoder_model.eval()
-    predictions = decoder_model(encoder_output,
+    logits, predictions = decoder_model(encoder_output,
                                 mask,
                                 max_out_length=max_output_seq_len)
-    self.assertEqual(predictions.shape,
+    self.assertEqual(logits.shape,
       (max_output_seq_len, batch_size, output_vocab_size))
+    self.assertEqual(predictions.shape, (max_output_seq_len, batch_size))
 
   def test_seq2seq_train(self):
     batch_size = 3
@@ -118,13 +146,35 @@ class ModelsTest(absltest.TestCase):
     input_vocab_size = 10
     output_vocab_size = 20
     inputs = torch.zeros((input_seq_len, batch_size)).type(torch.LongTensor)
-    input_lengths = torch.tensor([2, 3, 1])
+    input_lengths = torch.tensor([2, 4, 1])
     gold_outputs = torch.zeros((output_seq_len, batch_size)).type(torch.LongTensor)
     seq2seq_model = Seq2seq(input_vocab_size, output_vocab_size)
     seq2seq_model.train()
-    predictions = seq2seq_model(inputs, input_lengths, gold_outputs)
-    self.assertEqual(predictions.shape,
+    logits, predictions = seq2seq_model(inputs, input_lengths, gold_outputs)
+    self.assertEqual(logits.shape,
       (output_seq_len, batch_size, output_vocab_size))
+    self.assertEqual(predictions.shape, (output_seq_len, batch_size))
+
+  def test_seq2seq_train_cuda(self):
+    if torch.cuda.is_available():
+      device = "cuda"
+      batch_size = 3
+      input_seq_len = 4
+      output_seq_len = 5
+      input_vocab_size = 10
+      output_vocab_size = 20
+      inputs = torch.zeros((input_seq_len, batch_size)).type(torch.LongTensor).to(device)
+      input_lengths = torch.tensor([2, 4, 1])
+      gold_outputs = torch.zeros(
+        (output_seq_len, batch_size)).type(torch.LongTensor).to(device)
+      seq2seq_model = Seq2seq(
+        input_vocab_size, output_vocab_size, device=device).to(device)
+      seq2seq_model.train()
+      logits, predictions = seq2seq_model(inputs, input_lengths, gold_outputs)
+      self.assertEqual(logits.shape,
+        (output_seq_len, batch_size, output_vocab_size))
+      self.assertEqual(predictions.shape, (output_seq_len, batch_size))
+
 
 if __name__ == '__main__':
   absltest.main()

@@ -127,6 +127,9 @@ class Vocabs():
     self.token_vocab = token_vocab
     self.concept_vocab = concept_vocab
     self.relation_vocab = relation_vocab
+    self.token_vocab_size = len(token_vocab.keys())
+    self.concept_vocab_size = len(concept_vocab.keys())
+    self.relation_vocab_size = len(relation_vocab.keys())
 
   def get_token_idx(self, token: str):
     if token in self.token_vocab.keys():

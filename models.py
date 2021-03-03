@@ -33,10 +33,7 @@ class Encoder(nn.Module):
       input_lengths field, regardless of what the length with padding actually
       is.
     """
-    # print('inputs device', inputs.device)
-    # print('input_lengths device', input_lengths.device)
     embedded_inputs = self.embedding(inputs)
-    # print('embedded_inputs device', embedded_inputs.device)
     #TODO: see if enforce_sorted would help to be True (eg efficiency).
     packed_embedded = nn.utils.rnn.pack_padded_sequence(
       embedded_inputs, input_lengths, enforce_sorted = False)

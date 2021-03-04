@@ -207,7 +207,7 @@ class ModelsTest(absltest.TestCase):
     scores = edge_scoring(concepts)
     self.assertEqual(scores.shape, (batch_size, no_of_concepts, no_of_concepts))
 
-  def test_heads_selection(self):
+  def test_heads_selection_eval(self):
     batch_size = 2
     concept_vocab_size = 10
     seq_len = 3
@@ -221,8 +221,30 @@ class ModelsTest(absltest.TestCase):
     concepts = concepts.transpose(0,1)
     concepts_lengths = torch.tensor([3, 2])
     head_selection = HeadsSelection(concept_vocab_size)
+    head_selection.eval()
     scores = head_selection(concepts, concepts_lengths)
     self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
+
+  def test_heads_selection_train(self):
+    batch_size = 2
+    concept_vocab_size = 10
+    seq_len = 3
+    concepts = [
+      #batch ex 1 (amr1)
+      [1, 3, 3],
+      #batch ex 2 (amr2)
+      [4, 5, 0]
+    ]
+    adj_mat = torch.ones((batch_size, seq_len, seq_len))
+    concepts = torch.tensor(concepts)
+    concepts = concepts.transpose(0,1)
+    concepts_lengths = torch.tensor([3, 2])
+    head_selection = HeadsSelection(concept_vocab_size)
+    head_selection.train()
+    scores = head_selection(concepts, concepts_lengths, adj_mat)
+    self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
+
+  #TODO: mask tests!!!!!
 
 if __name__ == '__main__':
   absltest.main()

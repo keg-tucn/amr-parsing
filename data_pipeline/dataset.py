@@ -75,7 +75,8 @@ class AMRDataset(Dataset):
           g=amr_penman_graph,
           unalignment_tolerance=1)
         # Process the training entry (add EOS for sentence and concepts).
-        add_eos(training_entry, EOS)
+        if self.seq2seq_setting:
+          add_eos(training_entry, EOS)
         # Numericalize the training entry (str -> vocab ids).
         sentence, concepts, adj_mat = numericalize(training_entry, vocabs)
         # Convert to pytorch tensors.
@@ -117,12 +118,14 @@ class AMRDataset(Dataset):
     batch_concepts = []
     batch_adj_mats = []
     sentence_lengths = []
+    concepts_lengths = []
     for entry in batch:
       sentence, concepts, adj_mat = entry
       batch_sentences.append(sentence)
       batch_concepts.append(concepts)
       batch_adj_mats.append(adj_mat)
       sentence_lengths.append(len(sentence))
+      concepts_lengths.append(len(concepts))
     # Get max lengths for padding.
     max_sen_len = max([len(s) for s in batch_sentences])
     max_concepts_len = max([len(s) for s in batch_concepts])
@@ -150,11 +153,10 @@ class AMRDataset(Dataset):
       }
     else:
       new_batch = {
-        'sentence': torch.transpose(torch.stack(padded_sentences),0,1).to(self.device),
-        # This is left on the cpu for 'pack_padded_sequence'.
-        'sentence_lengts': torch.tensor(sentence_lengths),
         'concepts': torch.transpose(torch.stack(padded_concepts),0,1).to(self.device),
-        'adj_mat': torch.transpose(torch.stack(padded_adj_mats),0,1).to(self.device)
+        # This is left on the cpu for 'pack_padded_sequence'.
+        'concepts_lengths': torch.tensor(concepts_lengths),
+        'adj_mat': torch.stack(padded_adj_mats).to(self.device)
       }
     return new_batch
 

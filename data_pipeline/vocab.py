@@ -138,10 +138,10 @@ class Vocabs():
 
   def get_concept_idx(self, concept: str):
     if concept in self.concept_vocab.keys():
-      return self.concept_vocab[token]
+      return self.concept_vocab[concept]
     return self.concept_vocab[self.unkown_special_word]
 
-  def get_relation_idx(self, token: str):
-    if token in self.relation_vocab.keys():
-      return self.relation_vocab[token]
+  def get_relation_idx(self, relation: str):
+    if relation in self.relation_vocab.keys():
+      return self.relation_vocab[relation]
     return self.relation_vocab[self.unkown_special_word]

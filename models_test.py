@@ -69,6 +69,19 @@ class ModelsTest(absltest.TestCase):
     expected_shape = (batch_size, HIDDEN_SIZE)
     self.assertEqual(context.shape, expected_shape)
 
+  def test_additive_attention_batchsize_1(self):
+    batch_size = 1
+    input_seq_len = 7
+    mask = torch.tensor([
+      [True, True, True, False, False, False, False]
+    ])
+    decoder_prev_state = torch.zeros((batch_size, HIDDEN_SIZE))
+    encoder_outputs = torch.zeros((input_seq_len, batch_size, HIDDEN_SIZE))
+    attention_module = AdditiveAttention()
+    context = attention_module(decoder_prev_state, encoder_outputs, mask)
+    expected_shape = (batch_size, HIDDEN_SIZE)
+    self.assertEqual(context.shape, expected_shape)
+
   def test_decoder_step(self):
     output_vocab_size = 10
     batch_size = 3

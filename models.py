@@ -5,7 +5,7 @@ import torch.nn as nn
 import numpy as np
 
 EMB_DIM = 50
-HIDDEN_SIZE = 50
+HIDDEN_SIZE = 40
 NUM_LAYERS = 1
 
 #TODO: move this.
@@ -66,7 +66,7 @@ class AdditiveAttention(nn.Module):
         mask: shape (batch size, input seq len)
 
     Returns:
-        Context vector.
+        Context vector: (batch size, HIDDEN_SIZE).
     """
     
     seq_len = encoder_states.shape[0]
@@ -89,7 +89,7 @@ class AdditiveAttention(nn.Module):
     # [batch_size, input seq len, hidden size] -> [batch_size, hidden size, input seq len]
     encoder_states = encoder_states.transpose(1, 2)
     context_vector = torch.bmm(encoder_states, torch.unsqueeze(attention_scores, -1))
-    context_vector = context_vector.squeeze()
+    context_vector = context_vector.squeeze(dim=-1)
     return context_vector
 
 class DecoderClassifier(nn.Module):
@@ -225,6 +225,7 @@ class Decoder(nn.Module):
     # Create a batch of initial tokens.
     previous_token = torch.full((batch_size,), BOS_IDX).to(device=self.device)
     
+
     all_logits = torch.zeros(
       (output_seq_len, batch_size, self.output_vocab_size)).to(device=self.device)
     all_predictions = torch.zeros((output_seq_len, batch_size))
@@ -263,7 +264,8 @@ class Seq2seq(nn.Module):
   def forward(self,
               input_sequence: torch.Tensor,
               input_lengths: torch.Tensor,
-              gold_output_sequence: torch.Tensor):
+              gold_output_sequence: torch.Tensor = None,
+              max_out_length: int = None):
     """Forward seq2seq.
 
     Args:
@@ -277,6 +279,10 @@ class Seq2seq(nn.Module):
     encoder_output = self.encoder(input_sequence, input_lengths)
     input_seq_len = input_sequence.shape[0]
     attention_mask = self.create_mask(input_lengths, input_seq_len)
-    logits, predictions = self.decoder(
-      encoder_output, attention_mask, gold_output_sequence)
+    if self.training:
+      logits, predictions = self.decoder(
+        encoder_output, attention_mask, gold_output_sequence)
+    else:
+      logits, predictions = self.decoder(
+        encoder_output, attention_mask, max_out_length = max_out_length)
     return logits, predictions

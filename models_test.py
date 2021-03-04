@@ -52,6 +52,24 @@ class ModelsTest(absltest.TestCase):
       self.assertEqual(h.shape, (num_layers, 2, HIDDEN_SIZE))
       self.assertEqual(c.shape, (num_layers, 2, HIDDEN_SIZE))
       self.assertEqual(encoder_states.device.type, 'cuda')
+  def test_encoder_bilstm(self):
+    num_layers = 1
+    token_vocab_size = 10
+    inputs = [
+      [3, 5],
+      [7, 2],
+      [9, 0]
+    ]
+    inputs = torch.tensor(inputs)
+    seq_lengths = torch.tensor([3,2])
+    encoder = Encoder(token_vocab_size, use_bilstm=True)
+    outputs = encoder(inputs, seq_lengths)
+    encoder_states = outputs[0]
+    last_encoder_state = outputs[1]
+    h, c = last_encoder_state
+    self.assertEqual(encoder_states.shape, (3, 2, 2*HIDDEN_SIZE))
+    self.assertEqual(h.shape, (2*num_layers, 2, HIDDEN_SIZE))
+    self.assertEqual(c.shape, (2*num_layers, 2, HIDDEN_SIZE))
 
   def test_additive_attention(self):
     batch_size = 5
@@ -245,6 +263,40 @@ class ModelsTest(absltest.TestCase):
     self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
 
   #TODO: mask tests!!!!!
+
+  def test_dense_mlp(self):
+    node_repr_size = 5
+    batch_size = 3
+    dense_mlp = DenseMLP(node_repr_size=node_repr_size)
+    parent = torch.zeros((batch_size, node_repr_size))
+    child = torch.zeros((batch_size, node_repr_size))
+    edge_repr = dense_mlp(parent, child)
+    self.assertEqual(edge_repr.shape, (batch_size,))
+
+  def test_edge_scoring(self):
+    batch_size = 2
+    no_of_concepts = 3
+    concepts = torch.zeros((batch_size, no_of_concepts, 2*HIDDEN_SIZE))
+    edge_scoring = EdgeScoring()
+    scores = edge_scoring(concepts)
+    self.assertEqual(scores.shape, (batch_size, no_of_concepts, no_of_concepts))
+
+  def test_heads_selection(self):
+    batch_size = 2
+    concept_vocab_size = 10
+    seq_len = 3
+    concepts = [
+      #batch ex 1 (amr1)
+      [1, 3, 3],
+      #batch ex 2 (amr2)
+      [4, 5, 0]
+    ]
+    concepts = torch.tensor(concepts)
+    concepts = concepts.transpose(0,1)
+    concepts_lengths = torch.tensor([3, 2])
+    head_selection = HeadsSelection(concept_vocab_size)
+    scores = head_selection(concepts, concepts_lengths)
+    self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
 
 if __name__ == '__main__':
   absltest.main()

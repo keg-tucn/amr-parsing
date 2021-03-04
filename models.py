@@ -378,23 +378,28 @@ class HeadsSelection(nn.Module):
     Returns:
       Mask of boolean values with shape (batch size, seq len, seq len).
     """
+<<<<<<< HEAD
     # Dummy implementation for now.
     mask = torch.full(gold_adj_mat.shape, True)
     return mask
 
-  def create_fake_root_mask(self, batch_size, seq_len, root_idx = 0):
-    """Creates a fake root mask. A fake root is added to the concept list to 
-    be able to predict the amr top, but the fake root should not be a child, only
-    a parent. To enforce this, the column of the root is masked out.
-    Returns:
-      Mask of boolean values with shape (batch size, seq len, seq len).
+=======
+    pass
+
+  @staticmethod
+  def create_fake_root_mask(batch_size, seq_len, root_idx = 0):
     """
     mask = torch.full((batch_size, seq_len, seq_len), True)
     mask[:,:,root_idx] = False
     return mask
 
+<<<<<<< HEAD
   def create_mask(self,
                   seq_len: int,
+=======
+  @staticmethod
+  def create_mask(seq_len: int,
+>>>>>>> a5c0e36d68e5a4d5af3af016c8f6e0fadb28eda9
                   concepts_lengths: torch.tensor,
                   gold_adj_mat = None):
     """
@@ -410,35 +415,57 @@ class HeadsSelection(nn.Module):
       fake root -> the fake root should not have any parent.
     """
     batch_size = concepts_lengths.shape[0]
+<<<<<<< HEAD
     mask = self.create_padding_mask(concepts_lengths, seq_len)
     if self.training:
       sampling_mask = self.create_sampling_mask(gold_adj_mat)
       mask = mask * sampling_mask
     fake_root_mask = self.create_fake_root_mask(
+=======
+    mask = HeadsSelection.create_padding_mask(concepts_lengths, seq_len)
+    if self.training:
+      sampling_mask = HeadsSelection.create_sampling_mask(gold_adj_mat)
+      mask = mask * sampling_mask
+    fake_root_mask = HeadsSelection.create_fake_root_mask(
+>>>>>>> a5c0e36d68e5a4d5af3af016c8f6e0fadb28eda9
       batch_size, seq_len)
     mask = mask * fake_root_mask
     return mask
 
+<<<<<<< HEAD
   def forward(self,
               concepts: torch.tensor,
               concepts_lengths: torch.tensor,
               gold_adj_mat = None):
+=======
+  def forward(self, concepts: torch.tensor, concepts_lengths: torch.tensor):
+>>>>>>> a5c0e36d68e5a4d5af3af016c8f6e0fadb28eda9
     """
     Args:
       concepts (torch.tensor): Concepts (seq len, batch size).
       concepts_lengths (torch.tensor): Concept sequences lengths (batch size).
+<<<<<<< HEAD
       gold_adj_mat: Gold adj mat (matrix of relations), only sent on training
         of shape (batch size, seq len, seq len).
+=======
+>>>>>>> a5c0e36d68e5a4d5af3af016c8f6e0fadb28eda9
 
     Returns:
       Edge scores (batch size, seq len, seq len).
     """
+<<<<<<< HEAD
     seq_len = concepts.shape[0]
+=======
+>>>>>>> a5c0e36d68e5a4d5af3af016c8f6e0fadb28eda9
     encoded_concepts, _ = self.encoder(concepts, concepts_lengths)
     # Go from (seq len, batch size, node size) -> (batch size, seq len, node size).
     encoded_concepts = encoded_concepts.transpose(0, 1)
     scores = self.edge_scoring(encoded_concepts)
+<<<<<<< HEAD
     mask = self.create_mask(seq_len, concepts_lengths, gold_adj_mat)
     # TODO: would it make sense to instead weight the loss?
     # scores = scores.masked_fill(mask == 0, -float('inf'))
+=======
+    # TODO: maybe mask scores here.
+>>>>>>> a5c0e36d68e5a4d5af3af016c8f6e0fadb28eda9
     return scores

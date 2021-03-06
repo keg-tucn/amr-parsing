@@ -2,7 +2,6 @@ from random import randrange
 from typing import List, Dict
 
 import penman
-from penman.graph import Triple
 from penman.surface import alignments
 
 
@@ -22,7 +21,6 @@ def get_concept_ids(g: penman.Graph) -> List[int]:
   filtered_triples_ids = []
   for triple_id in range(len(triples)):
     t = triples[triple_id]
-    src = t[0]
     rel = t[1]
     trgt = t[2]
     if trgt not in variables or rel == ':instance':

@@ -274,7 +274,74 @@ class ModelsTest(absltest.TestCase):
     scores = head_selection(concepts, concepts_lengths, adj_mat)
     self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
 
-  #TODO: mask tests!!!!!
+  def test_create_padding_mask(self):
+    max_seq_len = 5
+    concept_lengths = torch.tensor([2, 3])
+    expected_padding_mask = [
+      [
+        [True, True, False, False, False],
+        [True, True, False, False, False],
+        [False, False, False, False, False],
+        [False, False, False, False, False],
+        [False, False, False, False, False]
+      ],
+      [
+        [True, True, True, False, False],
+        [True, True, True, False, False],
+        [True, True, True, False, False],
+        [False, False, False, False, False],
+        [False, False, False, False, False]
+      ]
+    ]
+    expected_padding_mask = torch.tensor(expected_padding_mask)
+    padding_mask = HeadsSelection.create_padding_mask(concept_lengths, max_seq_len)
+    self.assertTrue(torch.equal(padding_mask, expected_padding_mask))
+
+  def test_create_fake_root_mask(self):
+    batch_size = 2
+    seq_len = 5
+    expected_fake_root_mask = [
+      [
+        [False, True, True, True, True],
+        [False, True, True, True, True],
+        [False, True, True, True, True],
+        [False, True, True, True, True],
+        [False, True, True, True, True]
+      ],
+      [
+        [False, True, True, True, True],
+        [False, True, True, True, True],
+        [False, True, True, True, True],
+        [False, True, True, True, True],
+        [False, True, True, True, True]
+      ]
+    ]
+    expected_fake_root_mask = torch.tensor(expected_fake_root_mask)
+    fake_root_mask = HeadsSelection.create_fake_root_mask(batch_size, seq_len)
+    self.assertTrue(torch.equal(fake_root_mask, expected_fake_root_mask))
+
+  def test_create_mask(self):
+    seq_len = 5
+    concept_lengths = torch.tensor([2, 3])
+    expected_mask = [
+      [
+        [False, True, False, False, False],
+        [False, True, False, False, False],
+        [False, False, False, False, False],
+        [False, False, False, False, False],
+        [False, False, False, False, False]
+      ],
+      [
+        [False, True, True, False, False],
+        [False, True, True, False, False],
+        [False, True, True, False, False],
+        [False, False, False, False, False],
+        [False, False, False, False, False]
+      ]
+    ]
+    expected_mask = torch.tensor(expected_mask)
+    mask = HeadsSelection.create_mask(seq_len, concept_lengths, False)
+    self.assertTrue(torch.equal(mask, expected_mask))
 
 if __name__ == '__main__':
   absltest.main()

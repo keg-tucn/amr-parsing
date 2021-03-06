@@ -361,7 +361,18 @@ class HeadsSelection(nn.Module):
     self.encoder = Encoder(concept_vocab_size, hidden_size, use_bilstm=True)
     self.edge_scoring = EdgeScoring(hidden_size)
 
-  def create_padding_mask(self, concepts_lengths: torch.tensor, seq_len: int):
+  @staticmethod
+  def create_padding_mask(concepts_lengths: torch.tensor, seq_len: int):
+    """
+    Args:
+      concepts_lengths: Batch of concept sequence lengths (batch size).
+      seq_len: Maximum seq length.
+
+    Returns:
+      Batch of padding masks, with shape (batch size, max len, max len), where
+      each padding mask has False where the padding is and True otherwise, that
+      is the submatrix of size (concept len, concept len) is all True.
+    """
     arr_range = torch.arange(seq_len)
     # Create sequence mask.
     mask_1d = arr_range.unsqueeze(dim=0) < concepts_lengths.unsqueeze(dim=1)
@@ -372,7 +383,8 @@ class HeadsSelection(nn.Module):
     mask = x * y
     return mask
 
-  def create_sampling_mask(self, gold_adj_mat: torch.tensor,
+  @staticmethod
+  def create_sampling_mask(gold_adj_mat: torch.tensor,
                            sampling_ratio: int = SAMPLING_RATIO):
     """Create sampling mask (for balancing negative and positive classes).
     Args:
@@ -383,6 +395,7 @@ class HeadsSelection(nn.Module):
     Returns:
       Mask of boolean values with shape (batch size, seq len, seq len).
     """
+    #TODO: implement this!!!!
     # Dummy implementation for now.
     mask = torch.full(gold_adj_mat.shape, True)
     return mask
@@ -390,14 +403,23 @@ class HeadsSelection(nn.Module):
   @staticmethod
   def create_fake_root_mask(batch_size, seq_len, root_idx = 0):
     """
+    Args:
+      batch_size Batch size.
+      seq_len: Seq len.
+      root_idx: Index of the root in the scores matrix.
+
+    Returns:
+      Boolean mask ensuring the root cannot be a child of another concept,
+      which means the root column should be False.
     """
     mask = torch.full((batch_size, seq_len, seq_len), True)
     mask[:,:,root_idx] = False
     return mask
 
-  def create_mask(self,
-                  seq_len: int,
+  @staticmethod
+  def create_mask(seq_len: int,
                   concepts_lengths: torch.tensor,
+                  training: bool,
                   gold_adj_mat = None):
     """
     Creates a mask for masking scores (the scores will be masked with -inf to
@@ -410,13 +432,25 @@ class HeadsSelection(nn.Module):
       sampling -> we don't want to use all non-existing arcs, we will "sample"
         from them by masking out the ones we don't want to use.
       fake root -> the fake root should not have any parent.
+
+    Args:
+      seq_len: max length of concepts sequence.
+      concepts_lengths: Batch of concept sequence lengths (batch size).
+      training: bool for training flow.
+      gold_adj_mat: Gold adj mat (matrix of relations), only sent on training
+        of shape (batch size, seq len, seq len).
+    
+    Returns mask of shape (batch size, seq len, seq len).
     """
+    mat_sent_on_training = training and gold_adj_mat is not None
+    mat_not_sent_on_inference = not training and gold_adj_mat is None
+    assert mat_sent_on_training or mat_not_sent_on_inference
     batch_size = concepts_lengths.shape[0]
-    mask = self.create_padding_mask(concepts_lengths, seq_len)
-    if self.training:
-      sampling_mask = self.create_sampling_mask(gold_adj_mat)
+    mask = HeadsSelection.create_padding_mask(concepts_lengths, seq_len)
+    if training:
+      sampling_mask = HeadsSelection.create_sampling_mask(gold_adj_mat)
       mask = mask * sampling_mask
-    fake_root_mask = self.create_fake_root_mask(
+    fake_root_mask = HeadsSelection.create_fake_root_mask(
       batch_size, seq_len)
     mask = mask * fake_root_mask
     return mask
@@ -439,7 +473,7 @@ class HeadsSelection(nn.Module):
     encoded_concepts, _ = self.encoder(concepts, concepts_lengths)
     encoded_concepts = encoded_concepts.transpose(0,1)
     scores = self.edge_scoring(encoded_concepts)
-    mask = self.create_mask(seq_len, concepts_lengths, gold_adj_mat)
+    mask = self.create_mask(seq_len, concepts_lengths, self.training, gold_adj_mat)
     # TODO: would it make sense to instead weight the loss?
     # scores = scores.masked_fill(mask == 0, -float('inf'))
     return scores

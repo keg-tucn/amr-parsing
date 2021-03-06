@@ -100,10 +100,11 @@ if __name__ == "__main__":
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   print('Training on device', device)
 
-  subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
+  train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
              'mt09sdl', 'proxy', 'wb', 'xinhua']
-  train_paths = get_paths('training', subsets)
-  dev_paths = get_paths('dev', subsets)
+  dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+  train_paths = get_paths('training', train_subsets)
+  dev_paths = get_paths('dev', dev_subsets)
 
   special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
   vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))

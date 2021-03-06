@@ -18,6 +18,7 @@ from models import HeadsSelection
 BATCH_SIZE = 32
 DEV_BATCH_SIZE = 32
 NO_EPOCHS = 3
+HIDDEN_SIZE = 40
 
 
 def compute_loss(criterion, vocabs: Vocabs, logits: torch.Tensor, gold_outputs: torch.Tensor):
@@ -105,7 +106,7 @@ if __name__ == "__main__":
     dev_dataset, batch_size=DEV_BATCH_SIZE, collate_fn=dev_dataset.collate_fn)
 
   criterion = nn.BCEWithLogitsLoss()
-  model = HeadsSelection(vocabs.concept_vocab_size).to(device)
+  model = HeadsSelection(vocabs.concept_vocab_size, HIDDEN_SIZE).to(device)
   optimizer = optim.Adam(model.parameters())
   
   train_model(

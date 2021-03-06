@@ -1,5 +1,6 @@
 from typing import Dict
 import time
+import os
 
 import torch
 import torch.nn as nn
@@ -104,7 +105,8 @@ def train_step(model: nn.Module,
 def train_model(model: nn.Module,
                 optimizer,
                 vocabs,
-                writer,
+                train_writer: SummaryWriter,
+                eval_writer: SummaryWriter,
                 train_data_loader: DataLoader,
                 dev_data_loader: DataLoader):
   model.train()
@@ -124,9 +126,10 @@ def train_model(model: nn.Module,
     time_passed = end_time - start_time 
     print('Epoch {} (took {:.2f} seconds)'.format(epoch+1, time_passed))
     print('Train loss: {}, dev loss: {} '.format(epoch_loss, dev_loss))
-    writer.add_scalar("Loss/train", epoch_loss, epoch)
-    writer.add_scalar("Loss/eval", dev_loss, epoch)
-    writer.add_text('amr', logged_text, epoch)
+    losses = {'train_loss': epoch_loss, 'dev_los': dev_loss}
+    train_writer.add_scalar('loss', epoch_loss, epoch)
+    eval_writer.add_scalar('loss', dev_loss, epoch)
+    eval_writer.add_text('amr', logged_text, epoch)
 
 if __name__ == "__main__":
 
@@ -154,7 +157,13 @@ if __name__ == "__main__":
   model = HeadsSelection(vocabs.concept_vocab_size, HIDDEN_SIZE).to(device)
   optimizer = optim.Adam(model.parameters())
   
-  writer = SummaryWriter("temp/heads_selection")
+  #Use --logdir temp/heads_selection for tensorboard dev upload
+  tensorboard_dir = 'temp/heads_selection'
+  if not os.path.exists(tensorboard_dir):
+    os.makedirs(tensorboard_dir)
+  train_writer = SummaryWriter(tensorboard_dir+"/train")
+  eval_writer = SummaryWriter(tensorboard_dir+"/eval")
   train_model(model, 
-    optimizer, vocabs, writer, train_data_loader, dev_data_loader)
-  writer.close()
+    optimizer, vocabs, train_writer, eval_writer, train_data_loader, dev_data_loader)
+  train_writer.close()
+  eval_writer.close()

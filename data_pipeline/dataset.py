@@ -65,10 +65,13 @@ class AMRDataset(Dataset):
     self.sentences_list= []
     self.concepts_list = []
     self.adj_mat_list = []
+    self.ids = []
+    self.amr_strings_by_id = {}
     for path in paths:
       triples = extract_triples(path)
       for triple in triples:
         id, sentence, amr_str = triple
+        self.amr_strings_by_id[id] = amr_str
         amr_penman_graph = penman.decode(amr_str, model=noop.model)
         training_entry = TrainingEntry(
           sentence=sentence.split(),
@@ -85,6 +88,7 @@ class AMRDataset(Dataset):
         concepts = torch.tensor(concepts, dtype=torch.long)
         adj_mat = torch.tensor(adj_mat, dtype=torch.long)
         # Collect the data.
+        self.ids.append(id)
         self.sentences_list.append(sentence)
         self.concepts_list.append(concepts)
         self.adj_mat_list.append(adj_mat)
@@ -111,7 +115,7 @@ class AMRDataset(Dataset):
     return len(self.sentences_list)
 
   def __getitem__(self, item):
-    return self.sentences_list[item], self.concepts_list[item],  self.adj_mat_list[item]
+    return self.ids[item], self.sentences_list[item], self.concepts_list[item],  self.adj_mat_list[item]
 
   def collate_fn(self, batch):
     batch_sentences = []
@@ -120,7 +124,7 @@ class AMRDataset(Dataset):
     sentence_lengths = []
     concepts_lengths = []
     for entry in batch:
-      sentence, concepts, adj_mat = entry
+      amr_id, sentence, concepts, adj_mat = entry
       batch_sentences.append(sentence)
       batch_concepts.append(concepts)
       batch_adj_mats.append(adj_mat)
@@ -153,6 +157,7 @@ class AMRDataset(Dataset):
       }
     else:
       new_batch = {
+        'amr_id': amr_id,
         'concepts': torch.transpose(torch.stack(padded_concepts),0,1).to(self.device),
         # This is left on the cpu for 'pack_padded_sequence'.
         'concepts_lengths': torch.tensor(concepts_lengths),

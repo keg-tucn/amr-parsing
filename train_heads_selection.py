@@ -8,6 +8,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.nn.functional import pad as torch_pad
 from torch.nn.functional import binary_cross_entropy_with_logits
+from torch.optim import Optimizer
 from torch.utils.tensorboard import SummaryWriter
 
 from data_pipeline.data_reading import get_paths
@@ -50,7 +51,7 @@ def compute_loss(vocabs: Vocabs, mask: torch.Tensor,
     flattened_logits, flattened_binary_outputs, flattened_weights)
   return loss
 
-def eval_step(model, batch):
+def eval_step(model: nn.Module, batch: torch.tensor):
   inputs = batch['concepts']
   inputs_lengths = batch['concepts_lengths']
   gold_adj_mat = batch['adj_mat']
@@ -86,8 +87,8 @@ def evaluate_model(model: nn.Module,
     return epoch_loss, logged_text
 
 def train_step(model: nn.Module,
-               optimizer,
-               vocabs,
+               optimizer: Optimizer,
+               vocabs: Vocabs,
                batch: Dict[str, torch.Tensor]):
   inputs = batch['concepts']
   inputs_lengths = batch['concepts_lengths']
@@ -103,8 +104,8 @@ def train_step(model: nn.Module,
   return loss
 
 def train_model(model: nn.Module,
-                optimizer,
-                vocabs,
+                optimizer: Optimizer,
+                vocabs: Vocabs,
                 train_writer: SummaryWriter,
                 eval_writer: SummaryWriter,
                 train_data_loader: DataLoader,
@@ -136,11 +137,11 @@ if __name__ == "__main__":
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   print('Training on device', device)
 
-  # subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-            #  'mt09sdl', 'proxy', 'wb', 'xinhua']
-  subsets = ['bolt']
-  train_paths = get_paths('training', subsets)
-  dev_paths = get_paths('dev', subsets)
+  train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
+             'mt09sdl', 'proxy', 'wb', 'xinhua']
+  dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+  train_paths = get_paths('training', train_subsets)
+  dev_paths = get_paths('dev', dev_subsets)
 
   special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
   vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))

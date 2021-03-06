@@ -47,6 +47,31 @@ def compute_loss(vocabs: Vocabs, mask: torch.Tensor,
     flattened_logits, flattened_binary_outputs, flattened_weights)
   return loss
 
+def eval_step(model, batch):
+  inputs = batch['concepts']
+  inputs_lengths = batch['concepts_lengths']
+  gold_adj_mat = batch['adj_mat']
+
+  optimizer.zero_grad()
+  logits = model(inputs, inputs_lengths)
+  seq_len = inputs.shape[0]
+  mask = HeadsSelection.create_mask(seq_len, inputs_lengths, False)
+  loss = compute_loss(vocabs, mask, logits, gold_adj_mat)
+  return loss
+
+def evaluate_model(model: nn.Module,
+                   data_loader: DataLoader):
+  model.eval()
+  with torch.no_grad():
+    epoch_loss = 0
+    no_batches = 0
+    for batch in data_loader:
+      loss = eval_step(model, batch)
+      epoch_loss += loss
+      no_batches += 1
+    epoch_loss = epoch_loss / no_batches
+    return epoch_loss
+
 def train_step(model: nn.Module,
                optimizer,
                vocabs,
@@ -80,8 +105,7 @@ def train_model(model: nn.Module,
       epoch_loss += batch_loss
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
-    # dev_loss = evaluate_model(model, dev_data_loader)
-    dev_loss = 0
+    dev_loss = evaluate_model(model, dev_data_loader)
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time 

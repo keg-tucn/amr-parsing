@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.nn.functional import pad as torch_pad
+from torch.optim import Optimizer
 
 from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
@@ -21,6 +22,17 @@ NO_EPOCHS = 3
 
 
 def compute_loss(criterion, logits, gold_outputs):
+  """Computes cross entropy loss.
+
+  Args:
+    criterion: Cross entropy loss (with softmax).
+    logits: network outputs not passed through activation layer (softmax),
+      shape (output seq len, batch size, output no of classes).
+    gold_outputs: Gold outputs, shape (output seq len, batch size).
+
+  Returns:
+    Loss.
+  """
   # Flatten predictions to have only two dimensions,
   # batch size * seq len and no of classes.
   flattened_logits = logits.flatten(start_dim=0, end_dim=1)
@@ -29,7 +41,10 @@ def compute_loss(criterion, logits, gold_outputs):
   loss = criterion(flattened_logits, flattened_gold_outputs)
   return loss
 
-def eval_step(model, criterion, max_out_len, batch):
+def eval_step(model: nn.Module,
+              criterion: nn.Module,
+              max_out_len: int,
+              batch: Dict[str, torch.tensor]):
   inputs = batch['sentence']
   inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts']
@@ -44,7 +59,9 @@ def eval_step(model, criterion, max_out_len, batch):
   return loss
 
 def evaluate_model(model: nn.Module,
-                   criterion, max_out_len, data_loader: DataLoader):
+                   criterion: nn.Module,
+                   max_out_len: int,
+                   data_loader: DataLoader):
   model.eval()
   with torch.no_grad():
     epoch_loss = 0
@@ -57,8 +74,8 @@ def evaluate_model(model: nn.Module,
     return epoch_loss
 
 def train_step(model: nn.Module,
-               criterion,
-               optimizer,
+               criterion: nn.Module,
+               optimizer: Optimizer,
                batch: Dict[str, torch.Tensor]):
   inputs = batch['sentence']
   inputs_lengths = batch['sentence_lengts']
@@ -72,9 +89,9 @@ def train_step(model: nn.Module,
   return loss
 
 def train_model(model: nn.Module,
-                criterion,
-                optimizer,
-                max_out_len,
+                criterion: nn.Module,
+                optimizer: Optimizer,
+                max_out_len: int,
                 train_data_loader: DataLoader,
                 dev_data_loader: DataLoader):
   model.train()

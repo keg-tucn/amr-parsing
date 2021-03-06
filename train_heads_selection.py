@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.nn.functional import pad as torch_pad
+from torch.nn.functional import binary_cross_entropy_with_logits
 
 from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
@@ -21,28 +22,32 @@ NO_EPOCHS = 3
 HIDDEN_SIZE = 40
 
 
-def compute_loss(criterion, vocabs: Vocabs, logits: torch.Tensor, gold_outputs: torch.Tensor):
+def compute_loss(vocabs: Vocabs, mask: torch.Tensor,
+                 logits: torch.Tensor, gold_outputs: torch.Tensor):
   """
   Args:
-    criterion Binary loss criterion.
+    vocabs: Vocabs object (with the 3 vocabs).
+    mask: Mask for weighting the loss.
     logits: Concepts edges scores (batch size, seq len, seq len).
     gold_outputs: Gold adj mat (with relation labels) of shape
       (batch size, seq len, seq len).
 
   Returns:
-    loss.
+    Binary cross entropy loss over batch.
   """
   no_rel_index = vocabs.relation_vocab[None]
   pad_idx = vocabs.relation_vocab[PAD]
   binary_outputs = (gold_outputs != no_rel_index) * (gold_outputs != pad_idx)
   binary_outputs = binary_outputs.type(torch.FloatTensor)
+  weights = mask.type(torch.FloatTensor)
   flattened_logits = logits.flatten()
   flattened_binary_outputs = binary_outputs.flatten()
-  loss = criterion(flattened_logits, flattened_binary_outputs)
+  flattened_weights = weights.flatten()
+  loss = binary_cross_entropy_with_logits(
+    flattened_logits, flattened_binary_outputs, flattened_weights)
   return loss
 
 def train_step(model: nn.Module,
-               criterion,
                optimizer,
                vocabs,
                batch: Dict[str, torch.Tensor]):
@@ -52,13 +57,14 @@ def train_step(model: nn.Module,
 
   optimizer.zero_grad()
   logits = model(inputs, inputs_lengths, gold_adj_mat)
-  loss = compute_loss(criterion, vocabs, logits, gold_adj_mat)
+  seq_len = inputs.shape[0]
+  mask = HeadsSelection.create_mask(seq_len, inputs_lengths, True, gold_adj_mat)
+  loss = compute_loss(vocabs, mask, logits, gold_adj_mat)
   loss.backward()
   optimizer.step()
   return loss
 
 def train_model(model: nn.Module,
-                criterion,
                 optimizer,
                 vocabs,
                 train_data_loader: DataLoader,
@@ -70,11 +76,11 @@ def train_model(model: nn.Module,
     epoch_loss = 0
     no_batches = 0
     for batch in train_data_loader:
-      batch_loss = train_step(model, criterion, optimizer, vocabs, batch)
+      batch_loss = train_step(model, optimizer, vocabs, batch)
       epoch_loss += batch_loss
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
-    # dev_loss = evaluate_model(model, criterion, dev_data_loader)
+    # dev_loss = evaluate_model(model, dev_data_loader)
     dev_loss = 0
     model.train()
     end_time = time.time()
@@ -105,9 +111,8 @@ if __name__ == "__main__":
   dev_data_loader = DataLoader(
     dev_dataset, batch_size=DEV_BATCH_SIZE, collate_fn=dev_dataset.collate_fn)
 
-  criterion = nn.BCEWithLogitsLoss()
   model = HeadsSelection(vocabs.concept_vocab_size, HIDDEN_SIZE).to(device)
   optimizer = optim.Adam(model.parameters())
   
   train_model(
-    model, criterion, optimizer, vocabs, train_data_loader, dev_data_loader)
+    model, optimizer, vocabs, train_data_loader, dev_data_loader)

@@ -33,7 +33,7 @@ class TensorsToAmrTest(absltest.TestCase):
     adj_mat = torch.tensor(adj_mat)
     vocabs = MyVocabs()
     root_idx, concepts_as_list, adj_mat_as_list = tensors_to_lists(
-      concepts, concept_length, vocabs, adj_mat)
+      concepts, concept_length, adj_mat, vocabs)
     expected_concepts = ['dog', 'eat-01', 'bone']
     expected_adj_mat = [
       [0, 0, 0],

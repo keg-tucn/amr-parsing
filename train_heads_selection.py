@@ -7,6 +7,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.nn.functional import pad as torch_pad
 from torch.nn.functional import binary_cross_entropy_with_logits
+from torch.utils.tensorboard import SummaryWriter
 
 from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
@@ -21,6 +22,7 @@ DEV_BATCH_SIZE = 32
 NO_EPOCHS = 3
 HIDDEN_SIZE = 40
 
+UNK_REL_LABEL = ':unk-label'
 
 def compute_loss(vocabs: Vocabs, mask: torch.Tensor,
                  logits: torch.Tensor, gold_outputs: torch.Tensor):
@@ -51,6 +53,7 @@ def eval_step(model, batch):
   inputs = batch['concepts']
   inputs_lengths = batch['concepts_lengths']
   gold_adj_mat = batch['adj_mat']
+  amr_ids = batch['amr_id']
 
   optimizer.zero_grad()
   logits = model(inputs, inputs_lengths)
@@ -58,6 +61,14 @@ def eval_step(model, batch):
   mask = HeadsSelection.create_mask(seq_len, inputs_lengths, False)
   loss = compute_loss(vocabs, mask, logits, gold_adj_mat)
   return loss
+
+def get_logged_examples(data_loader: DataLoader):
+  # Dummy impl.
+  #This could be a few AMR examples (gold & predictions).
+  first_batch = next(iter(data_loader))
+  amr_ids = first_batch['amr_id']
+  logged_text = ' '.join(amr_ids)
+  return logged_text
 
 def evaluate_model(model: nn.Module,
                    data_loader: DataLoader):
@@ -70,7 +81,8 @@ def evaluate_model(model: nn.Module,
       epoch_loss += loss
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
-    return epoch_loss
+    logged_text = get_logged_examples(data_loader)
+    return epoch_loss, logged_text
 
 def train_step(model: nn.Module,
                optimizer,
@@ -92,6 +104,7 @@ def train_step(model: nn.Module,
 def train_model(model: nn.Module,
                 optimizer,
                 vocabs,
+                writer,
                 train_data_loader: DataLoader,
                 dev_data_loader: DataLoader):
   model.train()
@@ -105,12 +118,15 @@ def train_model(model: nn.Module,
       epoch_loss += batch_loss
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
-    dev_loss = evaluate_model(model, dev_data_loader)
+    dev_loss, logged_text = evaluate_model(model, dev_data_loader)
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time 
     print('Epoch {} (took {:.2f} seconds)'.format(epoch+1, time_passed))
     print('Train loss: {}, dev loss: {} '.format(epoch_loss, dev_loss))
+    writer.add_scalar("Loss/train", epoch_loss, epoch)
+    writer.add_scalar("Loss/eval", dev_loss, epoch)
+    writer.add_text('amr', logged_text, epoch)
 
 if __name__ == "__main__":
 
@@ -138,5 +154,7 @@ if __name__ == "__main__":
   model = HeadsSelection(vocabs.concept_vocab_size, HIDDEN_SIZE).to(device)
   optimizer = optim.Adam(model.parameters())
   
-  train_model(
-    model, optimizer, vocabs, train_data_loader, dev_data_loader)
+  writer = SummaryWriter("temp/heads_selection")
+  train_model(model, 
+    optimizer, vocabs, writer, train_data_loader, dev_data_loader)
+  writer.close()

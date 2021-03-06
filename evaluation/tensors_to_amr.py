@@ -8,14 +8,15 @@ NO_VAR = '_'
 
 def tensors_to_lists(concepts: torch.tensor,
                      concepts_length: torch.tensor,
-                     vocabs: Vocabs,
-                     adj_mat: torch.tensor):
+                     adj_mat: torch.tensor,
+                     vocabs: Vocabs):
   """
   Args:
     concepts: Concept sequence (max seq len).
     concepts_length: Concept sequence length scalar.
     adj_mat (torch.tensor): Adj matrix (with 0s and 1s) showing if there is
       an edge or not between concepts, shape (max len, max len).
+    vocabs: Vocabs object (the 3 vocabs).
 
   Returns:
     Python lists with no padding. The fake root is also removed and the root
@@ -119,9 +120,14 @@ def get_unlabelled_amr_str_from_tensors(concepts: torch.tensor,
       unlabelled setting).
   """
   root_idx, concepts_as_list, adj_mat_as_list = tensors_to_lists(
-    concepts, concepts_length, adj_mat)
-  #TODO: finish this.
-
+    concepts, concepts_length, adj_mat, vocabs)
+  concepts_var = generate_variables(concepts_as_list)
+  amr_str = generate_amr_str_rec(
+      root_idx, seen_nodes=[], depth=1,
+      concepts=concepts_as_list, concepts_var=concepts_var,
+      adj_mat=adj_mat_as_list,
+      relation_label=unk_rel_label)
+  #TODO: add tests for this.
 
 def get_unlabelled_amr_strings_from_tensors(concepts: torch.tensor,
                                             concepts_lengths: torch.tensor,
@@ -139,6 +145,6 @@ def get_unlabelled_amr_strings_from_tensors(concepts: torch.tensor,
       unk_rel_label: label that will be put on edges (cause this is the
         unlabelled setting).
   """
-  #TODO: finish this.
+  #TODO: finish this & add tests.
   pass
   

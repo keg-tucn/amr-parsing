@@ -47,31 +47,3 @@ class TrainingEntry():
         if relation != None:
           relations.append(relation)
     return tokens, concepts, relations
-
-  def numericalize(self,
-                   token_vocab: Dict[str, int],
-                   concept_vocab: Dict[str, int],
-                   relation_vocab: Dict[str, int]):
-    """
-    Processes the train entry into lists of integeres that can be easily converted
-    into tensors. For the adjacency matrix 0 will be used in case the relation
-    does not exist (is None).
-    Args:
-      token_vocab: Vocabulary of sentence tokens.
-      concept_vocab: Vocabulary of concepts.
-      relation_vocab: Vocabulary of arc relations.
-    Returns a tuple of:
-      sentece: List of token indices.
-      concepts: List of concept indices.
-      adj_mat: Adjacency matrix which contains arc labels indices in the vocab.
-    """
-    # Process sentence.
-    processed_sentence = [token_vocab[t] for t in self.sentence]
-    # Process concepts.
-    processed_concepts = [concept_vocab[c] for c in self.concepts]
-    # Process adjacency matrix.
-    processed_adj_mat = []
-    for row in self.adjacency_mat:
-      processed_row = [0 if r is None else relation_vocab[r] for r in row]
-      processed_adj_mat.append(processed_row)
-    return processed_sentence, processed_concepts, processed_adj_mat

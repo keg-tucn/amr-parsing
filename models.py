@@ -8,15 +8,19 @@ EMB_DIM = 50
 HIDDEN_SIZE = 40
 NUM_LAYERS = 1
 
+DENSE_MLP_HIDDEN_SIZE = 30
+SAMPLING_RATIO = 2
+
 #TODO: move this.
 BOS_IDX = 1
 
 class Encoder(nn.Module):
 
-  def __init__(self, input_vocab_size):
+  def __init__(self, input_vocab_size, hidden_size, use_bilstm=False):
     super(Encoder, self).__init__()
     self.embedding = nn.Embedding(input_vocab_size, EMB_DIM)
-    self.lstm = nn.LSTM(EMB_DIM, HIDDEN_SIZE, NUM_LAYERS)
+    self.lstm = nn.LSTM(
+      EMB_DIM, hidden_size, NUM_LAYERS, bidirectional=use_bilstm)
 
 
   def forward(self, inputs: torch.Tensor, input_lengths: torch.Tensor):
@@ -48,11 +52,11 @@ class AdditiveAttention(nn.Module):
   returns the context vector.
   """
 
-  def __init__(self):
+  def __init__(self, hidden_size: int):
     super(AdditiveAttention, self).__init__()
-    self.previous_state_proj = nn.Linear(HIDDEN_SIZE, HIDDEN_SIZE, bias=False)
-    self.encoder_states_proj = nn.Linear(HIDDEN_SIZE, HIDDEN_SIZE, bias=False)
-    self.attention_scores_proj = nn.Linear(HIDDEN_SIZE, 1, bias=False)
+    self.previous_state_proj = nn.Linear(hidden_size, hidden_size, bias=False)
+    self.encoder_states_proj = nn.Linear(hidden_size, hidden_size, bias=False)
+    self.attention_scores_proj = nn.Linear(hidden_size, 1, bias=False)
 
   def forward(self,
               decoder_prev_state: torch.Tensor,
@@ -94,11 +98,11 @@ class AdditiveAttention(nn.Module):
 
 class DecoderClassifier(nn.Module):
 
-  def __init__(self, output_vocab_size):
+  def __init__(self, output_vocab_size:int, hidden_size: int):
     super(DecoderClassifier, self).__init__()
     # Classifier input is a concatenation of previous embedding - EMB_DIM,
     # decoder state - HIDDEN_SIZE and context vector - HIDDEN_SIZE.
-    self.linear_layer = nn.Linear(EMB_DIM + 2*HIDDEN_SIZE, output_vocab_size)
+    self.linear_layer = nn.Linear(EMB_DIM + 2*hidden_size, output_vocab_size)
 
   def forward(self, classifier_input):
     logits = self.linear_layer(classifier_input)
@@ -113,15 +117,15 @@ class DecoderStep(nn.Module):
   decoding strategy.
   """
 
-  def __init__(self, output_vocab_size: int):
+  def __init__(self, output_vocab_size: int, hidden_size: int):
     super(DecoderStep, self).__init__()
     # Lstm input has size EMB_DIM + HIDDEN_SIZE (will take as input the 
     # previous embedding - EMB_DIM and the context vector - HIDDEN_SIZE).
-    self.lstm_cell = nn.LSTMCell(EMB_DIM + HIDDEN_SIZE, HIDDEN_SIZE)
-    self.additive_attention = AdditiveAttention()
+    self.lstm_cell = nn.LSTMCell(EMB_DIM + hidden_size, hidden_size)
+    self.additive_attention = AdditiveAttention(hidden_size)
     self.output_embedding = nn.Embedding(output_vocab_size, EMB_DIM)
     # Classifier input: previous embedding, decoder state, context vector.
-    self.classifier = DecoderClassifier(output_vocab_size)
+    self.classifier = DecoderClassifier(output_vocab_size, hidden_size)
 
   def forward(self,
               input: torch.Tensor,
@@ -164,15 +168,16 @@ class Decoder(nn.Module):
 
   def __init__(self,
                output_vocab_size: int,
+               hidden_size: int,
                teacher_forcing_ratio: float = 0.5,
                device: str = "cpu"):
     super(Decoder, self).__init__()
     self.device = device
     self.output_vocab_size = output_vocab_size
     self.teacher_forcing_ratio = teacher_forcing_ratio
-    self.decoder_step = DecoderStep(output_vocab_size)
-    self.initial_state_layer_h = nn.Linear(HIDDEN_SIZE, HIDDEN_SIZE)
-    self.initial_state_layer_c = nn.Linear(HIDDEN_SIZE, HIDDEN_SIZE)
+    self.decoder_step = DecoderStep(output_vocab_size, hidden_size)
+    self.initial_state_layer_h = nn.Linear(hidden_size, hidden_size)
+    self.initial_state_layer_c = nn.Linear(hidden_size, hidden_size)
 
   def compute_initial_decoder_state(self,
     last_encoder_states: Tuple[torch.Tensor, torch.Tensor]):
@@ -249,10 +254,14 @@ class Decoder(nn.Module):
 
 class Seq2seq(nn.Module):
 
-  def __init__(self, input_vocab_size: int, output_vocab_size: int, device="cpu"):
+  def __init__(self,
+               input_vocab_size: int,
+               output_vocab_size: int,
+               hidden_size:int = HIDDEN_SIZE,
+               device="cpu"):
     super(Seq2seq, self).__init__()
-    self.encoder = Encoder(input_vocab_size)
-    self.decoder = Decoder(output_vocab_size, device=device)
+    self.encoder = Encoder(input_vocab_size, hidden_size)
+    self.decoder = Decoder(output_vocab_size, hidden_size, device=device)
     self.device = device
 
   def create_mask(self, input_lengths: torch.Tensor, mask_seq_len: int):
@@ -286,3 +295,185 @@ class Seq2seq(nn.Module):
       logits, predictions = self.decoder(
         encoder_output, attention_mask, max_out_length = max_out_length)
     return logits, predictions
+
+class DenseMLP(nn.Module):
+  """
+  MLP from Dependency parsing as Head Selection.
+  """
+
+  def __init__(self,
+               node_repr_size:int):
+    super(DenseMLP, self).__init__()
+    self.Ua = nn.Linear(node_repr_size, DENSE_MLP_HIDDEN_SIZE, bias=False)
+    self.Wa = nn.Linear(node_repr_size, DENSE_MLP_HIDDEN_SIZE, bias=False)
+    self.va = nn.Linear(DENSE_MLP_HIDDEN_SIZE, 1, bias=False)
+
+
+  def forward(self, parent: torch.Tensor, child: torch.Tensor):
+    """
+    Args:
+        parent: Parent node representation (batch size, node repr size).
+        child: Child node representation (batch size, node repr size).
+    Returns
+      edge_score: (batch size).
+    """
+    edge_score = self.va(torch.tanh(self.Ua(parent) + self.Wa(child)))
+    # Return score of (batch size), not (batch size, 1).
+    return edge_score[:,0]
+
+class EdgeScoring(nn.Module):
+
+  def __init__(self, hidden_size: int):
+    super(EdgeScoring, self).__init__()
+    self.dense_mlp = DenseMLP(2 * hidden_size)
+
+  def forward(self, concepts: torch.tensor):
+    """
+    Args:
+        concepts: Sequence of ordered concepts, shape
+          (batch size, seq len, concept size).
+        The first concept is the fake root concept.
+    Returns:
+      scores between each pair of concepts, shape
+      (batch size, no of concepts, no of concepts).
+    """
+    batch_size, no_of_concepts, _ = concepts.shape
+    scores = torch.zeros((batch_size, no_of_concepts, no_of_concepts))
+    no_concepts = concepts.shape[1]
+    #TODO: think if this can be done without loops.
+    for i in range(no_concepts):
+      for j in range(no_concepts):
+        parent = concepts[:,i]
+        child = concepts[:,j]
+        score = self.dense_mlp(parent, child)
+        scores[:,i,j] = score
+    return scores
+
+class HeadsSelection(nn.Module):
+  """
+  Module for training heads selection separately.
+  The input is a list of numericalized concepts & the output is a matrix of
+  edge scores.
+  """
+
+  def __init__(self, concept_vocab_size, hidden_size: int):
+    super(HeadsSelection, self).__init__()
+    self.encoder = Encoder(concept_vocab_size, hidden_size, use_bilstm=True)
+    self.edge_scoring = EdgeScoring(hidden_size)
+
+  @staticmethod
+  def create_padding_mask(concepts_lengths: torch.tensor, seq_len: int):
+    """
+    Args:
+      concepts_lengths: Batch of concept sequence lengths (batch size).
+      seq_len: Maximum seq length.
+
+    Returns:
+      Batch of padding masks, with shape (batch size, max len, max len), where
+      each padding mask has False where the padding is and True otherwise, that
+      is the submatrix of size (concept len, concept len) is all True.
+    """
+    arr_range = torch.arange(seq_len)
+    # Create sequence mask.
+    mask_1d = arr_range.unsqueeze(dim=0) < concepts_lengths.unsqueeze(dim=1)
+    # Create 2d mask for each element in the batch by multiplying a repeated
+    # vector with its transpose.
+    x = mask_1d.unsqueeze(1).repeat(1, seq_len, 1)
+    y = x.transpose(1, 2)
+    mask = x * y
+    return mask
+
+  @staticmethod
+  def create_sampling_mask(gold_adj_mat: torch.tensor,
+                           sampling_ratio: int = SAMPLING_RATIO):
+    """Create sampling mask (for balancing negative and positive classes).
+    Args:
+      gold_adj_mat: Gold adjacency matrix (batch size, seq len, seq len).
+      sampling_ratio: How many negative edges should be sampled for a positive
+        edge. We sample this at concept level (if a concept has n heads, we
+        sample sampling_ration * n non-heads).
+    Returns:
+      Mask of boolean values with shape (batch size, seq len, seq len).
+    """
+    #TODO: implement this!!!!
+    # Dummy implementation for now.
+    mask = torch.full(gold_adj_mat.shape, True)
+    return mask
+
+  @staticmethod
+  def create_fake_root_mask(batch_size, seq_len, root_idx = 0):
+    """
+    Args:
+      batch_size Batch size.
+      seq_len: Seq len.
+      root_idx: Index of the root in the scores matrix.
+
+    Returns:
+      Boolean mask ensuring the root cannot be a child of another concept,
+      which means the root column should be False.
+    """
+    mask = torch.full((batch_size, seq_len, seq_len), True)
+    mask[:,:,root_idx] = False
+    return mask
+
+  @staticmethod
+  def create_mask(seq_len: int,
+                  concepts_lengths: torch.tensor,
+                  training: bool,
+                  gold_adj_mat = None):
+    """
+    Creates a mask for masking scores (the scores will be masked with -inf to
+    obtain 0 when passing through the sigmoid). This mask will be a mask of
+    boolean values:
+      False: masking out
+      True: masking in
+    Need to mask several things:
+      padding -> the sequences of concepts are padded.
+      sampling -> we don't want to use all non-existing arcs, we will "sample"
+        from them by masking out the ones we don't want to use.
+      fake root -> the fake root should not have any parent.
+
+    Args:
+      seq_len: max length of concepts sequence.
+      concepts_lengths: Batch of concept sequence lengths (batch size).
+      training: bool for training flow.
+      gold_adj_mat: Gold adj mat (matrix of relations), only sent on training
+        of shape (batch size, seq len, seq len).
+    
+    Returns mask of shape (batch size, seq len, seq len).
+    """
+    mat_sent_on_training = training and gold_adj_mat is not None
+    mat_not_sent_on_inference = not training and gold_adj_mat is None
+    assert mat_sent_on_training or mat_not_sent_on_inference
+    batch_size = concepts_lengths.shape[0]
+    mask = HeadsSelection.create_padding_mask(concepts_lengths, seq_len)
+    if training:
+      sampling_mask = HeadsSelection.create_sampling_mask(gold_adj_mat)
+      mask = mask * sampling_mask
+    fake_root_mask = HeadsSelection.create_fake_root_mask(
+      batch_size, seq_len)
+    mask = mask * fake_root_mask
+    return mask
+
+  def forward(self,
+              concepts: torch.tensor,
+              concepts_lengths: torch.tensor,
+              gold_adj_mat = None):
+    """
+    Args:
+      concepts (torch.tensor): Concepts (seq len, batch size).
+      concepts_lengths (torch.tensor): Concept sequences lengths (batch size).
+      gold_adj_mat: Gold adj mat (matrix of relations), only sent on training
+        of shape (batch size, seq len, seq len).
+
+    Returns:
+      Edge scores (batch size, seq len, seq len).
+    """
+    seq_len = concepts.shape[0]
+    encoded_concepts, _ = self.encoder(concepts, concepts_lengths)
+    encoded_concepts = encoded_concepts.transpose(0,1)
+    scores = self.edge_scoring(encoded_concepts)
+    mask = self.create_mask(seq_len, concepts_lengths, self.training, gold_adj_mat)
+    # TODO: would it make sense to instead weight the loss?
+    # scores = scores.masked_fill(mask == 0, -float('inf'))
+    return scores

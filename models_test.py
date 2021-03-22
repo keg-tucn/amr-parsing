@@ -251,8 +251,30 @@ class ModelsTest(absltest.TestCase):
     concepts_lengths = torch.tensor([3, 2])
     head_selection = HeadsSelection(concept_vocab_size, hidden_size)
     head_selection.eval()
-    scores = head_selection(concepts, concepts_lengths)
+    scores, predictions = head_selection(concepts, concepts_lengths)
     self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
+    self.assertEqual(predictions.shape, (batch_size, seq_len, seq_len))
+
+  def test_edge_prediction(self):
+    scores = [[[-0.0740, 0.0122, -0.0039],
+              [0.0268, 0.1135, 0.0972],
+              [0.0483, 0.1349, 0.1184]],
+
+            [[-0.0467, 0.0541, -0.0448],
+              [0.0024, 0.1034, 0.0080],
+              [-0.0051, 0.0995, 0.0000]]]
+    scores = torch.tensor(scores)
+
+    expected_predictions = [[[0, 1, 0],
+                             [1, 1, 1],
+                             [1, 1, 1]],
+                            [[0, 1, 0],
+                             [1, 1, 1],
+                             [0, 1, 1]]]
+    expected_predictions = torch.tensor(expected_predictions)
+
+    predictions = HeadsSelection.get_predictions(scores, 0.5)
+    self.assertTrue(torch.equal(expected_predictions, predictions))
 
   def test_heads_selection_train(self):
     batch_size = 2
@@ -271,8 +293,9 @@ class ModelsTest(absltest.TestCase):
     concepts_lengths = torch.tensor([3, 2])
     head_selection = HeadsSelection(concept_vocab_size, hidden_size)
     head_selection.train()
-    scores = head_selection(concepts, concepts_lengths, adj_mat)
+    scores, predictions = head_selection(concepts, concepts_lengths, adj_mat)
     self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
+    self.assertEqual(predictions.shape, (batch_size, seq_len, seq_len))
 
   def test_create_padding_mask(self):
     max_seq_len = 5

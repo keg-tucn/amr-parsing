@@ -11,6 +11,8 @@ NUM_LAYERS = 1
 DENSE_MLP_HIDDEN_SIZE = 30
 SAMPLING_RATIO = 2
 
+EDGE_THRESHOLD = 0.5
+
 #TODO: move this.
 BOS_IDX = 1
 
@@ -455,6 +457,20 @@ class HeadsSelection(nn.Module):
     mask = mask * fake_root_mask
     return mask
 
+  @staticmethod
+  def get_predictions(score_mat: torch.tensor, threshold: float = 0.5):
+    """
+    Args:
+      score_mat (torch.tensor): obtained scores
+      threshold: value to separate edge from non edge
+
+    Returns:
+      Prediction if is edge or not based on score matrix (binary matrix)
+    """
+    sigmoid_mat = torch.sigmoid(score_mat)
+    prediction_mat = torch.where(sigmoid_mat >= threshold, 1, 0)
+    return prediction_mat
+
   def forward(self,
               concepts: torch.tensor,
               concepts_lengths: torch.tensor,
@@ -476,4 +492,5 @@ class HeadsSelection(nn.Module):
     mask = self.create_mask(seq_len, concepts_lengths, self.training, gold_adj_mat)
     # TODO: would it make sense to instead weight the loss?
     # scores = scores.masked_fill(mask == 0, -float('inf'))
-    return scores
+    predictions = self.get_predictions(scores, EDGE_THRESHOLD)
+    return scores, predictions

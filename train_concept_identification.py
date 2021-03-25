@@ -1,3 +1,4 @@
+import os
 from typing import Dict
 import time
 
@@ -232,5 +233,13 @@ if __name__ == "__main__":
   optimizer = optim.Adam(model.parameters())
   criterion = nn.CrossEntropyLoss(ignore_index = PAD_IDX)
 
+  # Use --logdir temp/heads_selection for tensorboard dev upload
+  tensorboard_dir = 'temp/concept_identification'
+  if not os.path.exists(tensorboard_dir):
+      os.makedirs(tensorboard_dir)
+  train_writer = SummaryWriter(tensorboard_dir + "/train")
+  eval_writer = SummaryWriter(tensorboard_dir + "/eval")
   train_model(
-    model, criterion, optimizer, max_out_len, train_data_loader, dev_data_loader)
+      model, criterion, optimizer, max_out_len, train_data_loader, dev_data_loader, train_writer, eval_writer)
+  train_writer.close()
+  eval_writer.close()

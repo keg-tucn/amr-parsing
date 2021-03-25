@@ -2,6 +2,8 @@ import os
 from typing import Dict
 import time
 
+from absl import app
+from absl import flags
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,13 +16,24 @@ from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
 from data_pipeline.dataset import PAD, EOS, UNK, PAD_IDX
 from data_pipeline.dataset import AMRDataset
-
+from config import get_default_config
 from models import Seq2seq
 
-BATCH_SIZE = 32
-DEV_BATCH_SIZE = 32
-NO_EPOCHS = 40
-
+FLAGS = flags.FLAGS
+flags.DEFINE_string('config',
+                    default=None,
+                    help=('Config file to overwrite default configs.'))
+flags.DEFINE_integer('batch_size',
+                     default=32,
+                     short_name='b',
+                     help=('Batch size.'))
+flags.DEFINE_integer('dev_batch_size',
+                     default=32,
+                     help=('Dev batch size.'))
+flags.DEFINE_integer('no_epochs',
+                     short_name='e',
+                     default=20,
+                     help=('Number of epochs.'))
 
 def compute_loss(criterion, logits, gold_outputs):
   """Computes cross entropy loss.
@@ -127,6 +140,7 @@ def indices_to_words(outputs_no_padding,
 def eval_step(model: nn.Module,
               criterion: nn.Module,
               max_out_len: int,
+              vocabs: Vocabs,
               batch: Dict[str, torch.tensor]):
   inputs = batch['sentence']
   inputs_lengths = batch['sentence_lengts']
@@ -144,7 +158,9 @@ def eval_step(model: nn.Module,
 
 
 def evaluate_model(model: nn.Module,
+                   criterion: nn.Module,
                    max_out_len: int,
+                   vocabs: Vocabs,
                    data_loader: DataLoader):
   model.eval()
   with torch.no_grad():
@@ -179,70 +195,91 @@ def train_step(model: nn.Module,
 def train_model(model: nn.Module,
                 criterion: nn.Module,
                 optimizer: Optimizer,
+                no_epochs: int,
                 max_out_len: int,
+                vocabs: Vocabs,
                 train_data_loader: DataLoader,
                 dev_data_loader: DataLoader,
                 train_writer: SummaryWriter,
                 eval_writer: SummaryWriter):
   model.train()
-  for epoch in range(NO_EPOCHS):
+  for epoch in range(no_epochs):
     start_time = time.time()
     i = 0
     epoch_loss = 0
     no_batches = 0
     for batch in train_data_loader:
-      batch_loss = train_step(model, criterion, optimizer, batch)
-      epoch_loss += batch_loss
-      no_batches += 1
+        batch_loss = train_step(model, criterion, optimizer, batch)
+        epoch_loss += batch_loss
+        no_batches += 1
     epoch_loss = epoch_loss / no_batches
-    fscore, dev_loss = evaluate_model(model, max_out_len, dev_data_loader)
+    fscore, dev_loss = evaluate_model(
+        model, criterion, max_out_len, vocabs, dev_data_loader)
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time
     print('Epoch {} (took {:.2f} seconds)'.format(epoch + 1, time_passed))
-    print('Train loss: {}, dev loss: {}, f-score: {}'.format(epoch_loss, dev_loss, fscore))
+    print('Train loss: {}, dev loss: {}, f-score {}'.format(epoch_loss, dev_loss, fscore))
     train_writer.add_scalar('loss', epoch_loss, epoch)
     eval_writer.add_scalar('loss', dev_loss, epoch)
     eval_writer.add_scalar('f-score', fscore, epoch)
 
+def main(_):
+    #TODO: move to new file.
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print('Training on device', device)
+
+    train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
+                     'mt09sdl', 'proxy', 'wb', 'xinhua']
+    dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+    train_paths = get_paths('training', train_subsets)
+    dev_paths = get_paths('dev', dev_subsets)
+
+    special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
+    vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))
+    train_dataset = AMRDataset(
+        train_paths, vocabs, device, seq2seq_setting=True, ordered=True)
+    dev_dataset = AMRDataset(
+        dev_paths, vocabs, device, seq2seq_setting=True, ordered=True)
+    max_out_len = train_dataset.max_concepts_length
+
+    train_data_loader = DataLoader(
+        train_dataset, batch_size=FLAGS.batch_size,
+        collate_fn=train_dataset.collate_fn)
+    dev_data_loader = DataLoader(
+        dev_dataset, batch_size=FLAGS.dev_batch_size,
+        collate_fn=dev_dataset.collate_fn)
+
+    # Construct config object.
+    cfg = get_default_config()
+    if FLAGS.config:
+      config_file_name = FLAGS.config
+      config_path = os.path.join('configs', config_file_name)
+      cfg.merge_from_file(config_path)
+      cfg.freeze()
+
+    model = Seq2seq(
+        vocabs.token_vocab_size,
+        vocabs.concept_vocab_size,
+        cfg.CONCEPT_IDENTIFICATION.LSTM_BASED,
+        device=device).to(device)
+    optimizer = optim.Adam(model.parameters())
+    criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
+
+    # Use --logdir temp/heads_selection for tensorboard dev upload
+    tensorboard_dir = 'temp/concept_identification'
+    if not os.path.exists(tensorboard_dir):
+        os.makedirs(tensorboard_dir)
+    train_writer = SummaryWriter(tensorboard_dir + "/train")
+    eval_writer = SummaryWriter(tensorboard_dir + "/eval")
+    train_model(
+        model, criterion, optimizer, FLAGS.no_epochs,
+        max_out_len, vocabs,
+        train_data_loader, dev_data_loader,
+        train_writer, eval_writer)
+    train_writer.close()
+    eval_writer.close()
+
+
 if __name__ == "__main__":
-
-  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-  print('Training on device', device)
-
-  train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-             'mt09sdl', 'proxy', 'wb', 'xinhua']
-  dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
-  train_paths = get_paths('training', train_subsets)
-  dev_paths = get_paths('dev', dev_subsets)
-
-  special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
-  vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))
-  train_dataset = AMRDataset(
-    train_paths, vocabs, device, seq2seq_setting=True, ordered=True)
-  dev_dataset = AMRDataset(
-    dev_paths, vocabs, device, seq2seq_setting=True, ordered=True)
-  max_out_len = train_dataset.max_concepts_length
-
-  train_data_loader = DataLoader(
-    train_dataset, batch_size=BATCH_SIZE, collate_fn=train_dataset.collate_fn)
-  dev_data_loader = DataLoader(
-    dev_dataset, batch_size=DEV_BATCH_SIZE, collate_fn=dev_dataset.collate_fn)
-
-  model = Seq2seq(
-    vocabs.token_vocab_size,
-    vocabs.concept_vocab_size,
-    device=device).to(device)
-  optimizer = optim.Adam(model.parameters())
-  criterion = nn.CrossEntropyLoss(ignore_index = PAD_IDX)
-
-  # Use --logdir temp/heads_selection for tensorboard dev upload
-  tensorboard_dir = 'temp/concept_identification'
-  if not os.path.exists(tensorboard_dir):
-      os.makedirs(tensorboard_dir)
-  train_writer = SummaryWriter(tensorboard_dir + "/train")
-  eval_writer = SummaryWriter(tensorboard_dir + "/eval")
-  train_model(
-      model, criterion, optimizer, max_out_len, train_data_loader, dev_data_loader, train_writer, eval_writer)
-  train_writer.close()
-  eval_writer.close()
+    app.run(main)

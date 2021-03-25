@@ -3,3 +3,4 @@ absl-py
 torch
 tensorboard
 smatch
+yacs

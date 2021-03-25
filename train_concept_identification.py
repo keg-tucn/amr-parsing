@@ -54,10 +54,11 @@ def compute_fScore(gold_outputs, predicted_outputs):
     f_score
   """
 
-    predicted_outputs_no_padding, gold_outputs_no_padding = teasor_to_list(gold_outputs, predicted_outputs)
+    predicted_outputs_no_padding, gold_outputs_no_padding = tensor_to_list(gold_outputs, predicted_outputs)
 
     ids_to_concepts_list_gold = list(vocabs.concept_vocab.keys())
     concepts_as_list_gold = []
+    #TODO store the gold data before numericalization and use it here
     for sentence in gold_outputs_no_padding:
         concepts_as_list_gold = [ids_to_concepts_list_gold[id] for id in sentence if
                                  ids_to_concepts_list_gold[id] != UNK]
@@ -89,9 +90,7 @@ def compute_fScore(gold_outputs, predicted_outputs):
     return f_score
 
 
-def teasor_to_list(gold_outputs, predicted_outputs):
-    # Compute how many sentence there are
-    concepts_per_sentence_length = gold_outputs.shape[1]
+def tensor_to_list(gold_outputs, predicted_outputs):
 
     # Transpose the tensors, transform them in lists and remove the root
     gold_list_with_padding = []
@@ -107,7 +106,7 @@ def teasor_to_list(gold_outputs, predicted_outputs):
     for sentence in gold_list_with_padding:
         sentence_no_padding = []
         for word in sentence:
-            if int(word) == 1:
+            if word == 1:
                 break
             else:
                 sentence_no_padding.append(word)
@@ -136,27 +135,31 @@ def eval_step(model: nn.Module,
 
   logits, predictions = model(inputs, inputs_lengths, max_out_length=max_out_len)
 
-  # Pad gold outputs to max len (pad on second dimension).
+  f_score = compute_fScore(gold_outputs, predictions)
+
   gold_output_len = gold_outputs.shape[0]
   padded_gold_outputs = torch_pad(
     gold_outputs, (0, 0, 0, max_out_len - gold_output_len))
   loss = compute_loss(criterion, logits, padded_gold_outputs)
-  return loss
+  return f_score, loss
+
 
 def evaluate_model(model: nn.Module,
-                   criterion: nn.Module,
                    max_out_len: int,
                    data_loader: DataLoader):
   model.eval()
   with torch.no_grad():
+    epoch_f_score = 0
     epoch_loss = 0
     no_batches = 0
     for batch in data_loader:
-      loss = eval_step(model, criterion, max_out_len, batch)
+      f_score_epoch, loss = eval_step(model, criterion, max_out_len, batch)
+      epoch_f_score += f_score_epoch
       epoch_loss += loss
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
-    return epoch_loss
+    return epoch_f_score, epoch_loss
+
 
 def train_step(model: nn.Module,
                criterion: nn.Module,

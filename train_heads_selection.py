@@ -74,12 +74,10 @@ def get_logged_examples(vocabs: Vocabs, data_loader: DataLoader):
   gold_concepts_lengths = first_batch['concepts_lengths']
   gold_adj_mat = first_batch['adj_mat']
 
-  amr_ids = first_batch['amr_id']
-  print(amr_ids)
-
+  
   gold_amr_strings = get_unlabelled_amr_strings_from_tensors(
     gold_concepts, gold_concepts_lengths, gold_adj_mat, vocabs, UNK_REL_LABEL)
-
+  
   logged_text = '\n '.join(gold_amr_strings)
   return logged_text
 

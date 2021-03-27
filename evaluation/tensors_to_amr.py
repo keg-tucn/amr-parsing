@@ -121,13 +121,6 @@ def get_unlabelled_amr_str_from_tensors(concepts: torch.tensor,
   root_idx, concepts_as_list, adj_mat_as_list = tensors_to_lists(
     concepts, concepts_length, adj_mat, vocabs)
   concepts_var = generate_variables(concepts_as_list)
-  print(root_idx)
-  print(concepts)
-  print(concepts_length)
-  print(concepts_as_list)
-  print(adj_mat)
-  print(adj_mat_as_list)
-  print(concepts_var)
   amr_str = generate_amr_str_rec(
       root_idx, seen_nodes=[], depth=1,
       concepts=concepts_as_list, concepts_var=concepts_var,
@@ -142,7 +135,7 @@ def get_unlabelled_amr_strings_from_tensors(concepts: torch.tensor,
                                             unk_rel_label: str):
   """
   Args:
-      concepts: Batch of concept sequences (batch size, max seq len).
+      concepts: Batch of concept sequences (max seq len, batch size).
       concepts_lengths: Batch of sequences lentgths (batch size).
       adj_mats (torch.tensor): Batch of adj matrices (with 0s and 1s) showing if
         there is an edge or not between concepts, with shape
@@ -153,9 +146,9 @@ def get_unlabelled_amr_strings_from_tensors(concepts: torch.tensor,
   Returns: batch of unlabelled AMR strings
   """
   unlabelled_amrs = []
-  batch_size = concepts.shape[0]
+  batch_size = concepts.shape[1]
   for batch in range(batch_size):
-    amr_string = get_unlabelled_amr_str_from_tensors(concepts[batch],
+    amr_string = get_unlabelled_amr_str_from_tensors(concepts[:,batch],
                                                      concepts_lengths[batch],
                                                      adj_mats[batch],
                                                      vocabs,

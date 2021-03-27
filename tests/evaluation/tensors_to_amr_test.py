@@ -117,6 +117,8 @@ class TensorsToAmrTest(absltest.TestCase):
         self.concept_vocab = {'<pad>': 0, 'establish-01': 1, 'model': 2, 'industry': 3, 'innovate-01': 4}
 
     concepts = torch.tensor([[10, 1, 2, 3, 4, 0]])
+    # Concepts should have shape (seq len, batch size).
+    concepts = torch.transpose(concepts, 0, 1)
     concept_length = torch.tensor([5])
     adj_mat = [[
         [0, 1, 0, 0, 0, 0],

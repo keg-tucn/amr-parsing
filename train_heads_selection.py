@@ -17,10 +17,12 @@ import data_pipeline.dataset
 from data_pipeline.dataset import PAD, EOS, UNK, PAD_IDX
 from data_pipeline.dataset import AMRDataset
 
+
 from models import HeadsSelection
+from evaluation.tensors_to_amr import get_unlabelled_amr_strings_from_tensors
 
 BATCH_SIZE = 32
-DEV_BATCH_SIZE = 32
+DEV_BATCH_SIZE = 1
 NO_EPOCHS = 3
 HIDDEN_SIZE = 40
 
@@ -58,21 +60,31 @@ def eval_step(model: nn.Module, batch: torch.tensor):
   amr_ids = batch['amr_id']
 
   optimizer.zero_grad()
-  logits = model(inputs, inputs_lengths)
+  logits, predictions = model(inputs, inputs_lengths)
   seq_len = inputs.shape[0]
   mask = HeadsSelection.create_mask(seq_len, inputs_lengths, False)
   loss = compute_loss(vocabs, mask, logits, gold_adj_mat)
   return loss
 
-def get_logged_examples(data_loader: DataLoader):
+def get_logged_examples(vocabs: Vocabs, data_loader: DataLoader):
   # Dummy impl.
   #This could be a few AMR examples (gold & predictions).
   first_batch = next(iter(data_loader))
+  gold_concepts = first_batch['concepts']
+  gold_concepts_lengths = first_batch['concepts_lengths']
+  gold_adj_mat = first_batch['adj_mat']
+
   amr_ids = first_batch['amr_id']
-  logged_text = ' '.join(amr_ids)
+  print(amr_ids)
+
+  gold_amr_strings = get_unlabelled_amr_strings_from_tensors(
+    gold_concepts, gold_concepts_lengths, gold_adj_mat, vocabs, UNK_REL_LABEL)
+
+  logged_text = '\n '.join(gold_amr_strings)
   return logged_text
 
 def evaluate_model(model: nn.Module,
+                   vocabs: Vocabs,
                    data_loader: DataLoader):
   model.eval()
   with torch.no_grad():
@@ -83,7 +95,7 @@ def evaluate_model(model: nn.Module,
       epoch_loss += loss
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
-    logged_text = get_logged_examples(data_loader)
+    logged_text = get_logged_examples(vocabs, data_loader)
     return epoch_loss, logged_text
 
 def train_step(model: nn.Module,
@@ -95,7 +107,7 @@ def train_step(model: nn.Module,
   gold_adj_mat = batch['adj_mat']
 
   optimizer.zero_grad()
-  logits = model(inputs, inputs_lengths, gold_adj_mat)
+  logits, predictions = model(inputs, inputs_lengths, gold_adj_mat)
   seq_len = inputs.shape[0]
   mask = HeadsSelection.create_mask(seq_len, inputs_lengths, True, gold_adj_mat)
   loss = compute_loss(vocabs, mask, logits, gold_adj_mat)
@@ -121,7 +133,7 @@ def train_model(model: nn.Module,
       epoch_loss += batch_loss
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
-    dev_loss, logged_text = evaluate_model(model, dev_data_loader)
+    dev_loss, logged_text = evaluate_model(model, vocabs, dev_data_loader)
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time 
@@ -137,9 +149,12 @@ if __name__ == "__main__":
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   print('Training on device', device)
 
-  train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-             'mt09sdl', 'proxy', 'wb', 'xinhua']
-  dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+
+  #train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
+  #           'mt09sdl', 'proxy', 'wb', 'xinhua']
+  #dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+  train_subsets = ['bolt']
+  dev_subsets = ['xinhua']
   train_paths = get_paths('training', train_subsets)
   dev_paths = get_paths('dev', dev_subsets)
 

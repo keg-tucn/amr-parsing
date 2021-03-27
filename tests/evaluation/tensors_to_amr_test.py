@@ -4,7 +4,7 @@ import penman
 import torch
 
 from evaluation.tensors_to_amr import tensors_to_lists, generate_variables, \
-  get_unlabelled_amr_str_from_tensors, generate_amr_str_rec
+  get_unlabelled_amr_str_from_tensors, generate_amr_str_rec, get_unlabelled_amr_strings_from_tensors
 
 
 """
@@ -78,6 +78,66 @@ class TensorsToAmrTest(absltest.TestCase):
       relation_label=':unk-label')
     # Compare them with no extra spaces.
     amr_str = ' '.join(amr_str.split())
+    expected_amr_str = ' '.join(expected_amr_str.split())
+    self.assertEqual(amr_str.strip(), expected_amr_str.strip())
+
+  def test_get_unlabelled_amr_str_from_tensors(self):
+    class MyVocabs:
+      def __init__(self):
+        self.concept_vocab = {'<pad>': 0, 'establish-01': 1, 'model': 2, 'industry': 3, 'innovate-01': 4}
+
+    concepts = torch.tensor([10, 1, 2, 3, 4, 0])
+    concept_length = 5
+    adj_mat = [
+      [0, 1, 0, 0, 0, 0],
+      [0, 0, 1, 0, 0, 0],
+      [0, 0, 0, 0, 1, 0],
+      [0, 0, 0, 0, 0, 0],
+      [0, 0, 0, 1, 0, 0],
+      [0, 0, 0, 0, 0, 0]
+    ]
+    adj_mat = torch.tensor(adj_mat)
+    vocabs = MyVocabs()
+    expected_amr_str = """
+        ( e / establish-01 
+            :unk-label ( m / model 
+                    :unk-label ( i2 / innovate-01 
+                            :unk-label ( i / industry ))))"""
+
+    amr_str = get_unlabelled_amr_str_from_tensors(concepts, concept_length, adj_mat, vocabs, unk_rel_label=':unk-label')
+
+    # Compare them with no extra spaces.
+    amr_str = ' '.join(amr_str.split())
+    expected_amr_str = ' '.join(expected_amr_str.split())
+    self.assertEqual(amr_str.strip(), expected_amr_str.strip())
+
+  def test_get_unlabelled_amr_strings_from_tensors(self):
+    class MyVocabs:
+      def __init__(self):
+        self.concept_vocab = {'<pad>': 0, 'establish-01': 1, 'model': 2, 'industry': 3, 'innovate-01': 4}
+
+    concepts = torch.tensor([[10, 1, 2, 3, 4, 0]])
+    concept_length = torch.tensor([5])
+    adj_mat = [[
+        [0, 1, 0, 0, 0, 0],
+        [0, 0, 1, 0, 0, 0],
+        [0, 0, 0, 0, 1, 0],
+        [0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 1, 0, 0],
+        [0, 0, 0, 0, 0, 0]]]
+    adj_mat = torch.tensor(adj_mat)
+    vocabs = MyVocabs()
+    expected_amr_str = """
+        ( e / establish-01 
+            :unk-label ( m / model 
+                    :unk-label ( i2 / innovate-01 
+                            :unk-label ( i / industry ))))"""
+
+    amr_strings = get_unlabelled_amr_strings_from_tensors(
+      concepts, concept_length, adj_mat, vocabs, unk_rel_label=':unk-label')
+
+    # Compare them with no extra spaces.
+    amr_str = ' '.join(amr_strings[0].split())
     expected_amr_str = ' '.join(expected_amr_str.split())
     self.assertEqual(amr_str.strip(), expected_amr_str.strip())
 

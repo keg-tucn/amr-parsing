@@ -30,7 +30,10 @@ def extract_triples(path: str):
     # Use regex to extract the needed info from a text block.
     match = re.search(AMR_PATTERN, data_block, re.DOTALL)
     if match:
-      id, sentence, alignments, amr = match.groups()
+      id_line, sentence, alignments, amr = match.groups()
+      # Take only the id.
+      id_line = id_line.split(' ')
+      id = id_line[1]
       triples.append((id, sentence, amr))
   return triples
 

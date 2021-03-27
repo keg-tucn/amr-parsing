@@ -1,6 +1,7 @@
 from typing import Dict
 import time
 import os
+import shutil
 
 import torch
 import torch.nn as nn
@@ -74,11 +75,10 @@ def get_logged_examples(vocabs: Vocabs, data_loader: DataLoader):
   gold_concepts_lengths = first_batch['concepts_lengths']
   gold_adj_mat = first_batch['adj_mat']
 
-  
   gold_amr_strings = get_unlabelled_amr_strings_from_tensors(
     gold_concepts, gold_concepts_lengths, gold_adj_mat, vocabs, UNK_REL_LABEL)
   
-  logged_text = '\n '.join(gold_amr_strings)
+  logged_text = '  \n '.join(gold_amr_strings)
   return logged_text
 
 def evaluate_model(model: nn.Module,
@@ -148,11 +148,9 @@ if __name__ == "__main__":
   print('Training on device', device)
 
 
-  #train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-  #           'mt09sdl', 'proxy', 'wb', 'xinhua']
-  #dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
-  train_subsets = ['bolt']
-  dev_subsets = ['xinhua']
+  train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
+            'mt09sdl', 'proxy', 'wb', 'xinhua']
+  dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
   train_paths = get_paths('training', train_subsets)
   dev_paths = get_paths('dev', dev_subsets)
 
@@ -173,8 +171,11 @@ if __name__ == "__main__":
   
   #Use --logdir temp/heads_selection for tensorboard dev upload
   tensorboard_dir = 'temp/heads_selection'
-  if not os.path.exists(tensorboard_dir):
-    os.makedirs(tensorboard_dir)
+  if os.path.isdir(tensorboard_dir):
+    # Delete any existing tensorboard logs.
+    shutil.rmtree(tensorboard_dir)
+  # Create the dir again.
+  os.makedirs(tensorboard_dir)
   train_writer = SummaryWriter(tensorboard_dir+"/train")
   eval_writer = SummaryWriter(tensorboard_dir+"/eval")
   train_model(model, 

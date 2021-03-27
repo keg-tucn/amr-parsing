@@ -81,7 +81,7 @@ def generate_amr_str_rec(root: int, seen_nodes: List[int], depth,
   no_concepts = len(concepts)
   has_children = False
   for i in range(no_concepts):
-    if adj_mat[root][i] ==1:
+    if adj_mat[root][i] != 0:
       has_children = True
       # If there is an edge i is a child node.
       # Check if it's a constant or a node with variable.
@@ -113,8 +113,8 @@ def get_unlabelled_amr_str_from_tensors(concepts: torch.tensor,
   Args:
     concepts: Concept sequence (max seq len).
     concepts_length: Concept sequence length scalar.
-    adj_mat (torch.tensor): Adj matrix (with 0s and 1s) showing if there is
-      an edge or not between concepts, shape (max len, max len).
+    adj_mat (torch.tensor): Adj matrix showing if there is an edge (value !=0)
+    or not (value == 0) between concepts; shape (max len, max len).
     unk_rel_label: label that will be put on edges (cause this is the
       unlabelled setting).
   """

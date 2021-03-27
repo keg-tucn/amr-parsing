@@ -43,7 +43,9 @@ def compute_loss(criterion, logits, gold_outputs):
   return loss
 
 
-def compute_fScore(gold_outputs, predicted_outputs):
+def compute_fScore(gold_outputs,
+                   predicted_outputs,
+                   vocabs: Vocabs):
     """Computes f_score, precision, recall.
 
   Args:
@@ -60,14 +62,17 @@ def compute_fScore(gold_outputs, predicted_outputs):
     concepts_as_list_gold = []
     #TODO store the gold data before numericalization and use it here
     for sentence in gold_outputs_no_padding:
-        concepts_as_list_gold = [ids_to_concepts_list_gold[id] for id in sentence if
-                                 ids_to_concepts_list_gold[id] != UNK]
+        for id in sentence:
+            if ids_to_concepts_list_gold[id] != UNK:
+                concepts_as_list_gold.append(ids_to_concepts_list_gold[id])
+
 
     ids_to_concepts_list_predicted = list(vocabs.concept_vocab.keys())
     concepts_as_list_predicted = []
     for sentence in predicted_outputs_no_padding:
-        concepts_as_list_predicted = [ids_to_concepts_list_predicted[int(id)] for id in sentence if
-                                      ids_to_concepts_list_predicted[int(id)] != UNK]
+        for id in sentence:
+            if ids_to_concepts_list_predicted[int(id)] != UNK:
+                concepts_as_list_predicted.append(ids_to_concepts_list_predicted[int(id)])
 
     print("concepts_as_list_gold", concepts_as_list_gold)
     print("concepts_as_list_predicted", concepts_as_list_predicted)
@@ -116,7 +121,7 @@ def tensor_to_list(gold_outputs, predicted_outputs):
     for sentence in predicted_list_with_padding:
         sentence_no_padding = []
         for word in sentence:
-            if word == 1:
+            if int(word) == 1:
                 break
             else:
                 sentence_no_padding.append(word)
@@ -135,7 +140,7 @@ def eval_step(model: nn.Module,
 
   logits, predictions = model(inputs, inputs_lengths, max_out_length=max_out_len)
 
-  f_score = compute_fScore(gold_outputs, predictions)
+  f_score = compute_fScore(gold_outputs, predictions, vocabs)
 
   gold_output_len = gold_outputs.shape[0]
   padded_gold_outputs = torch_pad(
@@ -157,6 +162,7 @@ def evaluate_model(model: nn.Module,
       epoch_f_score += f_score_epoch
       epoch_loss += loss
       no_batches += 1
+    epoch_f_score = epoch_f_score / no_batches
     epoch_loss = epoch_loss / no_batches
     return epoch_f_score, epoch_loss
 

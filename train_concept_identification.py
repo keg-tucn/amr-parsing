@@ -89,8 +89,9 @@ def tensor_to_list(gold_outputs,
     predicted_list_no_padding = extract_padding(predicted_outputs, eos_index)
 
     # Remove UNK from the sequence
-    concepts_as_list_gold = remove_unk_from_sequence(gold_list_no_padding, vocabs)
-    concepts_as_list_predicted = remove_unk_from_sequence(predicted_list_no_padding, vocabs)
+    # TODO store the gold data before numericalization and use it here
+    concepts_as_list_gold = indices_to_words(gold_list_no_padding, vocabs)
+    concepts_as_list_predicted = indices_to_words(predicted_list_no_padding, vocabs)
 
     return concepts_as_list_predicted, concepts_as_list_gold
 
@@ -115,15 +116,11 @@ def extract_padding(outputs, eos_index):
     return list_no_padding
 
 
-def remove_unk_from_sequence(outputs_no_padding,
+def indices_to_words(outputs_no_padding,
                              vocabs: Vocabs):
-    # TODO store the gold data before numericalization and use it here
     ids_to_concepts_list = list(vocabs.concept_vocab.keys())
-    concepts_as_list = []
-    for sentence in outputs_no_padding:
-        for id in sentence:
-            if ids_to_concepts_list[int(id)] != UNK:
-                concepts_as_list.append(ids_to_concepts_list[int(id)])
+    concepts_as_list = [ids_to_concepts_list[int(id)] for sentence in outputs_no_padding for id in sentence
+                              if ids_to_concepts_list[int(id)] != UNK]
     return concepts_as_list
 
 

@@ -18,9 +18,9 @@ import data_pipeline.dataset
 from data_pipeline.dataset import PAD, EOS, UNK, PAD_IDX
 from data_pipeline.dataset import AMRDataset
 
-
 from models import HeadsSelection
 from evaluation.tensors_to_amr import get_unlabelled_amr_strings_from_tensors
+from smatch import score_amr_pairs
 
 BATCH_SIZE = 32
 DEV_BATCH_SIZE = 1
@@ -55,6 +55,7 @@ def compute_loss(vocabs: Vocabs, mask: torch.Tensor,
   return loss
 
 def eval_step(model: nn.Module, batch: torch.tensor):
+  global best_f_score
   inputs = batch['concepts']
   inputs_lengths = batch['concepts_lengths']
   gold_adj_mat = batch['adj_mat']
@@ -65,7 +66,24 @@ def eval_step(model: nn.Module, batch: torch.tensor):
   seq_len = inputs.shape[0]
   mask = HeadsSelection.create_mask(seq_len, inputs_lengths, False)
   loss = compute_loss(vocabs, mask, logits, gold_adj_mat)
-  return loss
+
+  gold_outputs = get_unlabelled_amr_strings_from_tensors(
+    inputs, inputs_lengths, gold_adj_mat, vocabs, UNK_REL_LABEL)
+  predictions_strings = get_unlabelled_amr_strings_from_tensors(
+    inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
+
+  print("gold ", gold_outputs)
+  print("pred ", predictions_strings)
+
+  gold_outputs = iter(gold_outputs)
+  predictions_strings = iter(predictions_strings)
+
+  for (precision, recall, best_f_score) in score_amr_pairs(gold_outputs, predictions_strings):
+    print("Precision: ", precision)
+    print("Recall: ", recall)
+    print("F-score: ", best_f_score, end="\n\n")
+
+  return loss, best_f_score
 
 def get_logged_examples(vocabs: Vocabs, data_loader: DataLoader):
   # Dummy impl.
@@ -88,13 +106,17 @@ def evaluate_model(model: nn.Module,
   with torch.no_grad():
     epoch_loss = 0
     no_batches = 0
+    epoch_smatch = 0
     for batch in data_loader:
-      loss = eval_step(model, batch)
+      print("Batch no: ", no_batches)
+      loss, smatch = eval_step(model, batch)
       epoch_loss += loss
+      epoch_smatch += smatch
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
+    epoch_smatch = epoch_smatch / no_batches
     logged_text = get_logged_examples(vocabs, data_loader)
-    return epoch_loss, logged_text
+    return epoch_loss, epoch_smatch, logged_text
 
 def train_step(model: nn.Module,
                optimizer: Optimizer,
@@ -131,15 +153,16 @@ def train_model(model: nn.Module,
       epoch_loss += batch_loss
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
-    dev_loss, logged_text = evaluate_model(model, vocabs, dev_data_loader)
+    dev_loss, smatch, logged_text = evaluate_model(model, vocabs, dev_data_loader)
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time 
     print('Epoch {} (took {:.2f} seconds)'.format(epoch+1, time_passed))
-    print('Train loss: {}, dev loss: {} '.format(epoch_loss, dev_loss))
+    print('Train loss: {}, dev loss: {}, smatch: {} '.format(epoch_loss, dev_loss, smatch))
     losses = {'train_loss': epoch_loss, 'dev_los': dev_loss}
     train_writer.add_scalar('loss', epoch_loss, epoch)
     eval_writer.add_scalar('loss', dev_loss, epoch)
+    eval_writer.add_scalar('smatch', smatch, epoch)
     eval_writer.add_text('amr', logged_text, epoch)
 
 if __name__ == "__main__":

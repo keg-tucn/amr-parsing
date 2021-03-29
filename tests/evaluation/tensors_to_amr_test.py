@@ -44,6 +44,63 @@ class TensorsToAmrTest(absltest.TestCase):
     self.assertEqual(concepts_as_list, expected_concepts)
     self.assertEqual(adj_mat_as_list, expected_adj_mat)
 
+  def test_tensors_to_lists_multiple_roots(self):
+    class MyVocabs:
+      def __init__(self):
+        self.concept_vocab = {'<pad>': 0, 'dog': 1, 'eat-01': 2, 'bone': 3}
+
+    concepts = torch.tensor([10, 1, 2, 3, 0, 0])
+    concept_length = 4
+    adj_mat = [
+      [0, 0, 1, 1, 0],
+      [0, 0, 0, 0, 0],
+      [0, 1, 0, 1, 0],
+      [0, 0, 0, 0, 0],
+      [0, 0, 0, 0, 0]
+    ]
+    adj_mat = torch.tensor(adj_mat)
+    vocabs = MyVocabs()
+    root_idx, concepts_as_list, adj_mat_as_list = tensors_to_lists(
+      concepts, concept_length, adj_mat, vocabs)
+    expected_concepts = ['dog', 'eat-01', 'bone']
+    expected_adj_mat = [
+      [0, 0, 0],
+      [1, 0, 1],
+      [0, 0, 0],
+    ]
+    self.assertTrue(root_idx == 1 or root_idx == 2)
+    self.assertEqual(concepts_as_list, expected_concepts)
+    self.assertEqual(adj_mat_as_list, expected_adj_mat)
+
+  def test_tensors_to_lists_no_roots(self):
+    class MyVocabs:
+      def __init__(self):
+        self.concept_vocab = {'<pad>': 0, 'dog': 1, 'eat-01': 2, 'bone': 3}
+
+    concepts = torch.tensor([10, 1, 2, 3, 0, 0])
+    concept_length = 4
+    adj_mat = [
+      [0, 0, 0, 0, 0],
+      [0, 0, 0, 0, 0],
+      [0, 1, 0, 1, 0],
+      [0, 0, 0, 0, 0],
+      [0, 0, 0, 0, 0]
+    ]
+    adj_mat = torch.tensor(adj_mat)
+    vocabs = MyVocabs()
+    root_idx, concepts_as_list, adj_mat_as_list = tensors_to_lists(
+      concepts, concept_length, adj_mat, vocabs)
+    expected_concepts = ['dog', 'eat-01', 'bone']
+    expected_adj_mat = [
+      [0, 0, 0],
+      [1, 0, 1],
+      [0, 0, 0],
+    ]
+    print(root_idx)
+    self.assertTrue(root_idx == 0 or root_idx == 1 or root_idx == 2 or root_idx == 3)
+    self.assertEqual(concepts_as_list, expected_concepts)
+    self.assertEqual(adj_mat_as_list, expected_adj_mat)
+
   def test_generate_variables(self):
     concepts = ['establish-01', 'model', 'industry', 'innovate-01']
     expected_variables = ['e', 'm', 'i', 'i2']

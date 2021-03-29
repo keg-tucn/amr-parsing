@@ -2,6 +2,7 @@ from typing import List
 
 import torch
 import numpy as np
+import random
 
 from data_pipeline.vocab import Vocabs
 
@@ -27,9 +28,13 @@ def tensors_to_lists(concepts: torch.tensor,
   concepts_no_padding = concepts[0:concepts_length]
   adj_mat_no_padding = adj_mat[0:concepts_length, 0:concepts_length]
   # Extract real root.
-  #TODO: in case of no root or multiple roots, pick random.
-  root_idx = torch.nonzero(adj_mat[0])
-  root_idx = int(root_idx[0])
+  root_indexes = torch.nonzero(adj_mat[0])
+  root_idx = random.randrange(1, len(adj_mat[0].tolist()), 1)
+  if(len(root_indexes.tolist()) == 1):
+    root_idx = int(root_indexes[0])
+  if(len(root_indexes.tolist()) > 1):
+    chosen_index = random.randrange(len(root_indexes.tolist()))
+    root_idx = int(root_indexes[chosen_index])
   # Remove fake root
   concepts_no_fake_root = concepts_no_padding[1:]
   adj_mat_no_fake_root = adj_mat_no_padding[1:,1:]

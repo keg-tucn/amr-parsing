@@ -51,28 +51,13 @@ def compute_fScore(gold_outputs,
   Args:
     gold_outputs: Gold outputs, shape (output seq len, batch size)
     predicted_outputs: Predicted outputs, shape (output seq len, batch size)
-
+    vocabs: Vocabs object
   Returns:
     f_score
   """
 
-    predicted_outputs_no_padding, gold_outputs_no_padding = tensor_to_list(gold_outputs, predicted_outputs)
-
-    ids_to_concepts_list_gold = list(vocabs.concept_vocab.keys())
-    concepts_as_list_gold = []
-    #TODO store the gold data before numericalization and use it here
-    for sentence in gold_outputs_no_padding:
-        for id in sentence:
-            if ids_to_concepts_list_gold[id] != UNK:
-                concepts_as_list_gold.append(ids_to_concepts_list_gold[id])
-
-
-    ids_to_concepts_list_predicted = list(vocabs.concept_vocab.keys())
-    concepts_as_list_predicted = []
-    for sentence in predicted_outputs_no_padding:
-        for id in sentence:
-            if ids_to_concepts_list_predicted[int(id)] != UNK:
-                concepts_as_list_predicted.append(ids_to_concepts_list_predicted[int(id)])
+    eos_index= list(vocabs.concept_vocab.keys()).index(EOS)
+    concepts_as_list_predicted, concepts_as_list_gold = tensor_to_list(gold_outputs, predicted_outputs, eos_index, vocabs)
 
     print("concepts_as_list_gold", concepts_as_list_gold)
     print("concepts_as_list_predicted", concepts_as_list_predicted)
@@ -95,39 +80,51 @@ def compute_fScore(gold_outputs,
     return f_score
 
 
-def tensor_to_list(gold_outputs, predicted_outputs):
+def tensor_to_list(gold_outputs,
+                   predicted_outputs,
+                   eos_index,
+                   vocabs:Vocabs):
+    # Extract padding from original outputs
+    gold_list_no_padding = extract_padding(gold_outputs, eos_index)
+    predicted_list_no_padding = extract_padding(predicted_outputs, eos_index)
+
+    # Remove UNK from the sequence
+    concepts_as_list_gold = remove_unk_from_sequence(gold_list_no_padding, vocabs)
+    concepts_as_list_predicted = remove_unk_from_sequence(predicted_list_no_padding, vocabs)
+
+    return concepts_as_list_predicted, concepts_as_list_gold
+
+
+def extract_padding(outputs, eos_index):
+    list_with_padding = []
+    list_no_padding = []
 
     # Transpose the tensors, transform them in lists and remove the root
-    gold_list_with_padding = []
-    for sentence in torch.transpose(gold_outputs, 0, 1):
-        gold_list_with_padding.append(sentence.tolist()[1:])
-
-    predicted_list_with_padding = []
-    for sentence in torch.transpose(predicted_outputs, 0, 1):
-        predicted_list_with_padding.append(sentence.tolist()[1:])
+    for sentence in torch.transpose(outputs, 0, 1):
+        list_with_padding.append(sentence.tolist()[1:])
 
     # Remove the padding -> stop at EOS, for both gold and predicted concepts
-    gold_list_no_padding = []
-    for sentence in gold_list_with_padding:
+    for sentence in list_with_padding:
         sentence_no_padding = []
         for word in sentence:
-            if word == 1:
+            if int(word) == eos_index:
                 break
             else:
                 sentence_no_padding.append(word)
-        gold_list_no_padding.append(sentence_no_padding)
+        list_no_padding.append(sentence_no_padding)
+    return list_no_padding
 
-    predicted_list_no_padding = []
-    for sentence in predicted_list_with_padding:
-        sentence_no_padding = []
-        for word in sentence:
-            if int(word) == 1:
-                break
-            else:
-                sentence_no_padding.append(word)
-        predicted_list_no_padding.append(sentence_no_padding)
 
-    return predicted_list_no_padding, gold_list_no_padding
+def remove_unk_from_sequence(outputs_no_padding,
+                             vocabs: Vocabs):
+    # TODO store the gold data before numericalization and use it here
+    ids_to_concepts_list = list(vocabs.concept_vocab.keys())
+    concepts_as_list = []
+    for sentence in outputs_no_padding:
+        for id in sentence:
+            if ids_to_concepts_list[int(id)] != UNK:
+                concepts_as_list.append(ids_to_concepts_list[int(id)])
+    return concepts_as_list
 
 
 def eval_step(model: nn.Module,

@@ -23,6 +23,12 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string('config',
                     default=None,
                     help=('Config file to overwrite default configs.'))
+flags.DEFINE_string('train_subsets',
+                    default=None,
+                    help=('Train subsets split by comma. Ex: bolt,proxy'))
+flags.DEFINE_string('dev_subsets',
+                    default=None,
+                    help=('Train subsets split by comma. Ex: bolt,proxy'))
 flags.DEFINE_integer('batch_size',
                      default=32,
                      short_name='b',
@@ -168,7 +174,7 @@ def evaluate_model(model: nn.Module,
     epoch_loss = 0
     no_batches = 0
     for batch in data_loader:
-      f_score_epoch, loss = eval_step(model, criterion, max_out_len, batch)
+      f_score_epoch, loss = eval_step(model, criterion, max_out_len, vocabs, batch)
       epoch_f_score += f_score_epoch
       epoch_loss += loss
       no_batches += 1
@@ -229,9 +235,18 @@ def main(_):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print('Training on device', device)
 
-    train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-                     'mt09sdl', 'proxy', 'wb', 'xinhua']
-    dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+    if FLAGS.train_subsets is None:
+      train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
+                       'mt09sdl', 'proxy', 'wb', 'xinhua']
+    else:
+      # Take subsets from flag passed.
+      train_subsets = FLAGS.train_subsets.split(',')
+    if FLAGS.dev_subsets is None:
+      dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+    else:
+      # Take subsets from flag passed.
+      dev_subsets = FLAGS.dev_subsets.split(',')
+
     train_paths = get_paths('training', train_subsets)
     dev_paths = get_paths('dev', dev_subsets)
 

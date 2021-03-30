@@ -65,7 +65,7 @@ def compute_loss(criterion, logits, gold_outputs):
 def compute_fScore(gold_outputs,
                    predicted_outputs,
                    vocabs: Vocabs):
-    """Computes f_score, precision, recall.
+  """Computes f_score, precision, recall.
 
   Args:
     gold_outputs: Gold outputs, shape (output seq len, batch size)
@@ -75,72 +75,73 @@ def compute_fScore(gold_outputs,
     f_score
   """
 
-    eos_index= list(vocabs.concept_vocab.keys()).index(EOS)
-    concepts_as_list_predicted, concepts_as_list_gold = tensor_to_list(gold_outputs, predicted_outputs, eos_index, vocabs)
+  eos_index= list(vocabs.concept_vocab.keys()).index(EOS)
+  concepts_as_list_predicted, concepts_as_list_gold = tensor_to_list(gold_outputs, predicted_outputs, eos_index, vocabs)
 
-    print("concepts_as_list_gold", concepts_as_list_gold)
-    print("concepts_as_list_predicted", concepts_as_list_predicted)
+  print("concepts_as_list_gold", concepts_as_list_gold)
+  print("concepts_as_list_predicted", concepts_as_list_predicted)
 
-    true_positive = len(set(concepts_as_list_gold) & set(concepts_as_list_predicted))
-    false_positive = len(set(concepts_as_list_predicted).difference(set(concepts_as_list_gold)))
-    false_negative = len(set(concepts_as_list_gold).difference(set(concepts_as_list_predicted)))
-    precision = 0
-    recall = 0
-    print(f'tp = {true_positive}, fn = {false_negative}, fp = {false_positive}')
+  true_positive = len(set(concepts_as_list_gold) & set(concepts_as_list_predicted))
+  false_positive = len(set(concepts_as_list_predicted).difference(set(concepts_as_list_gold)))
+  false_negative = len(set(concepts_as_list_gold).difference(set(concepts_as_list_predicted)))
+  precision = 0
+  recall = 0
+  print(f'tp = {true_positive}, fn = {false_negative}, fp = {false_positive}')
 
-    if len(concepts_as_list_predicted) != 0:
-        precision = true_positive / (true_positive + false_positive)
-        recall = true_positive / (true_positive + false_negative)
-    f_score = 0
+  if len(concepts_as_list_predicted) != 0:
+    precision = true_positive / (true_positive + false_positive)
+    recall = true_positive / (true_positive + false_negative)
+  f_score = 0
 
-    if precision + recall != 0:
-        f_score = 2 * (precision * recall) / (precision + recall)
+  if precision + recall != 0:
+    f_score = 2 * (precision * recall) / (precision + recall)
 
-    return f_score
+  return f_score
 
 
 def tensor_to_list(gold_outputs,
                    predicted_outputs,
                    eos_index,
                    vocabs:Vocabs):
-    # Extract padding from original outputs
-    gold_list_no_padding = extract_padding(gold_outputs, eos_index)
-    predicted_list_no_padding = extract_padding(predicted_outputs, eos_index)
+  # Extract padding from original outputs
+  gold_list_no_padding = extract_padding(gold_outputs, eos_index)
+  predicted_list_no_padding = extract_padding(predicted_outputs, eos_index)
 
-    # Remove UNK from the sequence
-    # TODO store the gold data before numericalization and use it here
-    concepts_as_list_gold = indices_to_words(gold_list_no_padding, vocabs)
-    concepts_as_list_predicted = indices_to_words(predicted_list_no_padding, vocabs)
+  # Remove UNK from the sequence
+  # TODO store the gold data before numericalization and use it here
+  concepts_as_list_gold = indices_to_words(gold_list_no_padding, vocabs)
+  concepts_as_list_predicted = indices_to_words(predicted_list_no_padding, vocabs)
 
-    return concepts_as_list_predicted, concepts_as_list_gold
+  return concepts_as_list_predicted, concepts_as_list_gold
 
 
 def extract_padding(outputs, eos_index):
-    list_with_padding = []
-    list_no_padding = []
+  list_with_padding = []
+  list_no_padding = []
 
-    # Transpose the tensors, transform them in lists and remove the root
-    for sentence in torch.transpose(outputs, 0, 1):
-        list_with_padding.append(sentence.tolist()[1:])
+  # Transpose the tensors, transform them in lists and remove the root
+  for sentence in torch.transpose(outputs, 0, 1):
+      list_with_padding.append(sentence.tolist()[1:])
 
-    # Remove the padding -> stop at EOS, for both gold and predicted concepts
-    for sentence in list_with_padding:
-        sentence_no_padding = []
-        for word in sentence:
-            if int(word) == eos_index:
-                break
-            else:
-                sentence_no_padding.append(word)
-        list_no_padding.append(sentence_no_padding)
-    return list_no_padding
+  # Remove the padding -> stop at EOS, for both gold and predicted concepts
+  for sentence in list_with_padding:
+    sentence_no_padding = []
+    for word in sentence:
+      if int(word) == eos_index:
+        break
+      else:
+        sentence_no_padding.append(word)
+    list_no_padding.append(sentence_no_padding)
+  return list_no_padding
 
 
 def indices_to_words(outputs_no_padding,
-                             vocabs: Vocabs):
-    ids_to_concepts_list = list(vocabs.concept_vocab.keys())
-    concepts_as_list = [ids_to_concepts_list[int(id)] for sentence in outputs_no_padding for id in sentence
-                              if ids_to_concepts_list[int(id)] != UNK]
-    return concepts_as_list
+                     vocabs: Vocabs):
+  ids_to_concepts_list = list(vocabs.concept_vocab.keys())
+  concepts_as_list = [ids_to_concepts_list[int(id)]\
+                        for sentence in outputs_no_padding for id in sentence\
+                        if ids_to_concepts_list[int(id)] != UNK]
+  return concepts_as_list
 
 
 def eval_step(model: nn.Module,
@@ -231,70 +232,70 @@ def train_model(model: nn.Module,
     eval_writer.add_scalar('f-score', fscore, epoch)
 
 def main(_):
-    #TODO: move to new file.
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print('Training on device', device)
+  #TODO: move to new file.
+  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+  print('Training on device', device)
 
-    if FLAGS.train_subsets is None:
-      train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-                       'mt09sdl', 'proxy', 'wb', 'xinhua']
-    else:
-      # Take subsets from flag passed.
-      train_subsets = FLAGS.train_subsets.split(',')
-    if FLAGS.dev_subsets is None:
-      dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
-    else:
-      # Take subsets from flag passed.
-      dev_subsets = FLAGS.dev_subsets.split(',')
+  if FLAGS.train_subsets is None:
+    train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
+                      'mt09sdl', 'proxy', 'wb', 'xinhua']
+  else:
+    # Take subsets from flag passed.
+    train_subsets = FLAGS.train_subsets.split(',')
+  if FLAGS.dev_subsets is None:
+    dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+  else:
+    # Take subsets from flag passed.
+    dev_subsets = FLAGS.dev_subsets.split(',')
 
-    train_paths = get_paths('training', train_subsets)
-    dev_paths = get_paths('dev', dev_subsets)
+  train_paths = get_paths('training', train_subsets)
+  dev_paths = get_paths('dev', dev_subsets)
 
-    special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
-    vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))
-    train_dataset = AMRDataset(
-        train_paths, vocabs, device, seq2seq_setting=True, ordered=True)
-    dev_dataset = AMRDataset(
-        dev_paths, vocabs, device, seq2seq_setting=True, ordered=True)
-    max_out_len = train_dataset.max_concepts_length
+  special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
+  vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))
+  train_dataset = AMRDataset(
+    train_paths, vocabs, device, seq2seq_setting=True, ordered=True)
+  dev_dataset = AMRDataset(
+    dev_paths, vocabs, device, seq2seq_setting=True, ordered=True)
+  max_out_len = train_dataset.max_concepts_length
 
-    train_data_loader = DataLoader(
-        train_dataset, batch_size=FLAGS.batch_size,
-        collate_fn=train_dataset.collate_fn)
-    dev_data_loader = DataLoader(
-        dev_dataset, batch_size=FLAGS.dev_batch_size,
-        collate_fn=dev_dataset.collate_fn)
+  train_data_loader = DataLoader(
+    train_dataset, batch_size=FLAGS.batch_size,
+    collate_fn=train_dataset.collate_fn)
+  dev_data_loader = DataLoader(
+    dev_dataset, batch_size=FLAGS.dev_batch_size,
+    collate_fn=dev_dataset.collate_fn)
 
-    # Construct config object.
-    cfg = get_default_config()
-    if FLAGS.config:
-      config_file_name = FLAGS.config
-      config_path = os.path.join('configs', config_file_name)
-      cfg.merge_from_file(config_path)
-      cfg.freeze()
+  # Construct config object.
+  cfg = get_default_config()
+  if FLAGS.config:
+    config_file_name = FLAGS.config
+    config_path = os.path.join('configs', config_file_name)
+    cfg.merge_from_file(config_path)
+    cfg.freeze()
 
-    model = Seq2seq(
-        vocabs.token_vocab_size,
-        vocabs.concept_vocab_size,
-        cfg.CONCEPT_IDENTIFICATION.LSTM_BASED,
-        device=device).to(device)
-    optimizer = optim.Adam(model.parameters())
-    criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
+  model = Seq2seq(
+    vocabs.token_vocab_size,
+    vocabs.concept_vocab_size,
+    cfg.CONCEPT_IDENTIFICATION.LSTM_BASED,
+    device=device).to(device)
+  optimizer = optim.Adam(model.parameters())
+  criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
 
-    # Use --logdir temp/heads_selection for tensorboard dev upload
-    tensorboard_dir = 'temp/concept_identification'
-    if not os.path.exists(tensorboard_dir):
-        os.makedirs(tensorboard_dir)
-    train_writer = SummaryWriter(tensorboard_dir + "/train")
-    eval_writer = SummaryWriter(tensorboard_dir + "/eval")
-    train_model(
-        model, criterion, optimizer, FLAGS.no_epochs,
-        max_out_len, vocabs,
-        train_data_loader, dev_data_loader,
-        train_writer, eval_writer)
-    train_writer.close()
-    eval_writer.close()
+  # Use --logdir temp/heads_selection for tensorboard dev upload
+  tensorboard_dir = 'temp/concept_identification'
+  if not os.path.exists(tensorboard_dir):
+      os.makedirs(tensorboard_dir)
+  train_writer = SummaryWriter(tensorboard_dir + "/train")
+  eval_writer = SummaryWriter(tensorboard_dir + "/eval")
+  train_model(
+    model, criterion, optimizer, FLAGS.no_epochs,
+    max_out_len, vocabs,
+    train_data_loader, dev_data_loader,
+    train_writer, eval_writer)
+  train_writer.close()
+  eval_writer.close()
 
 
 if __name__ == "__main__":
-    app.run(main)
+  app.run(main)

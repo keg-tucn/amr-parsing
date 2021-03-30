@@ -1,7 +1,6 @@
 from typing import List
 
 import torch
-import numpy as np
 import random
 
 from data_pipeline.vocab import Vocabs
@@ -28,8 +27,8 @@ def tensors_to_lists(concepts: torch.tensor,
   concepts_no_padding = concepts[0:concepts_length]
   adj_mat_no_padding = adj_mat[0:concepts_length, 0:concepts_length]
   # Extract real root.
-  root_indexes = torch.nonzero(adj_mat[0])
-  root_idx = random.randrange(1, len(adj_mat[0].tolist()), 1)
+  root_indexes = torch.nonzero(adj_mat_no_padding[0])
+  root_idx = random.randrange(1, concepts_length)
   if(len(root_indexes.tolist()) == 1):
     root_idx = int(root_indexes[0])
   if(len(root_indexes.tolist()) > 1):
@@ -61,7 +60,6 @@ def is_constant_concept(concept: str):
     return True
   except ValueError:
     return False
-  return False
 
 def generate_variables(concepts: List[str]):
   variables = []
@@ -127,7 +125,7 @@ def get_unlabelled_amr_str_from_tensors(concepts: torch.tensor,
     concepts, concepts_length, adj_mat, vocabs)
   concepts_var = generate_variables(concepts_as_list)
   amr_str = generate_amr_str_rec(
-      root_idx, seen_nodes=[], depth=1,
+      root_idx, seen_nodes=[root_idx], depth=1,
       concepts=concepts_as_list, concepts_var=concepts_var,
       adj_mat=adj_mat_as_list,
       relation_label=unk_rel_label)

@@ -2,20 +2,19 @@ from typing import Dict
 import time
 import os
 import shutil
+import io
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.nn.functional import pad as torch_pad
 from torch.nn.functional import binary_cross_entropy_with_logits
 from torch.optim import Optimizer
 from torch.utils.tensorboard import SummaryWriter
 
 from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
-import data_pipeline.dataset
-from data_pipeline.dataset import PAD, EOS, UNK, PAD_IDX
+from data_pipeline.dataset import PAD, EOS, UNK
 from data_pipeline.dataset import AMRDataset
 
 from models import HeadsSelection
@@ -23,11 +22,24 @@ from evaluation.tensors_to_amr import get_unlabelled_amr_strings_from_tensors
 from smatch import score_amr_pairs
 
 BATCH_SIZE = 32
-DEV_BATCH_SIZE = 1
-NO_EPOCHS = 3
+DEV_BATCH_SIZE = 32
+NO_EPOCHS = 20
 HIDDEN_SIZE = 40
 
 UNK_REL_LABEL = ':unk-label'
+
+AMR_ID = 'amr_id'
+GOLD_CONCEPTS = 'concepts'
+GOLD_CONCEPTS_LEN = 'concepts_lengths'
+GOLD_ADJ_MAT = 'adj_mat'
+
+def get_gold_data(batch: torch.tensor):
+  amr_ids = batch[AMR_ID]
+  gold_concepts = batch[GOLD_CONCEPTS]
+  gold_concepts_length = batch[GOLD_CONCEPTS_LEN]
+  gold_adj_mat = batch[GOLD_ADJ_MAT]
+
+  return amr_ids, gold_concepts, gold_concepts_length, gold_adj_mat
 
 def compute_loss(vocabs: Vocabs, mask: torch.Tensor,
                  logits: torch.Tensor, gold_outputs: torch.Tensor):
@@ -54,77 +66,79 @@ def compute_loss(vocabs: Vocabs, mask: torch.Tensor,
     flattened_logits, flattened_binary_outputs, flattened_weights)
   return loss
 
+def compute_smatch(gold_outputs, predictions):
+  """
+  Args:
+    gold_outputs: list of gold amrs as strings
+    predictions: list of predictions of amrs as strings
+
+  Returns:
+    smatch: the smatch score is composed of 3 metrics:
+      - precision
+      - recall
+      - best f-score
+  """
+  gold_outputs = ' \n\n '.join(gold_outputs)
+  predictions = ' \n\n '.join(predictions)
+
+  gold_file = io.StringIO(gold_outputs)
+  pred_file = io.StringIO(predictions)
+
+  smatch_score = {}
+  smatch_score["precision"], smatch_score["recall"], smatch_score["best_f_score"] = \
+    next(score_amr_pairs(gold_file, pred_file))
+
+  return smatch_score
+
 def eval_step(model: nn.Module, batch: torch.tensor):
-  global best_f_score
-  inputs = batch['concepts']
-  inputs_lengths = batch['concepts_lengths']
-  gold_adj_mat = batch['adj_mat']
-  amr_ids = batch['amr_id']
+  amr_ids, inputs, inputs_lengths, gold_adj_mat = get_gold_data(batch)
 
   optimizer.zero_grad()
   logits, predictions = model(inputs, inputs_lengths)
   seq_len = inputs.shape[0]
   mask = HeadsSelection.create_mask(seq_len, inputs_lengths, False)
-  loss = compute_loss(vocabs, mask, logits, gold_adj_mat)
 
   gold_outputs = get_unlabelled_amr_strings_from_tensors(
     inputs, inputs_lengths, gold_adj_mat, vocabs, UNK_REL_LABEL)
   predictions_strings = get_unlabelled_amr_strings_from_tensors(
     inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
 
-  print("gold ", gold_outputs)
-  print("pred ", predictions_strings)
+  loss = compute_loss(vocabs, mask, logits, gold_adj_mat)
+  smatch_score = compute_smatch(gold_outputs, predictions_strings)
+  amr_comparison_text = '  \n'.join([gold_outputs[0], predictions_strings[0]])
 
-  gold_outputs = iter(gold_outputs)
-  predictions_strings = iter(predictions_strings)
-
-  for (precision, recall, best_f_score) in score_amr_pairs(gold_outputs, predictions_strings):
-    print("Precision: ", precision)
-    print("Recall: ", recall)
-    print("F-score: ", best_f_score, end="\n\n")
-
-  return loss, best_f_score
-
-def get_logged_examples(vocabs: Vocabs, data_loader: DataLoader):
-  # Dummy impl.
-  #This could be a few AMR examples (gold & predictions).
-  first_batch = next(iter(data_loader))
-  gold_concepts = first_batch['concepts']
-  gold_concepts_lengths = first_batch['concepts_lengths']
-  gold_adj_mat = first_batch['adj_mat']
-
-  gold_amr_strings = get_unlabelled_amr_strings_from_tensors(
-    gold_concepts, gold_concepts_lengths, gold_adj_mat, vocabs, UNK_REL_LABEL)
-  
-  logged_text = '  \n '.join(gold_amr_strings)
-  return logged_text
+  return loss, smatch_score, amr_comparison_text
 
 def evaluate_model(model: nn.Module,
-                   vocabs: Vocabs,
                    data_loader: DataLoader):
   model.eval()
   with torch.no_grad():
     epoch_loss = 0
     no_batches = 0
-    epoch_smatch = 0
+    epoch_smatch = {
+      "precision": 0.0,
+      "recall": 0.0,
+      "best_f_score": 0.0
+    }
+    logged_text = "GOLD VS PREDICTED AMRS\n\n"
+
     for batch in data_loader:
-      print("Batch no: ", no_batches)
-      loss, smatch = eval_step(model, batch)
+      loss, smatch_score, amr_comparison_text = eval_step(model, batch)
       epoch_loss += loss
-      epoch_smatch += smatch
+      epoch_smatch["precision"] += smatch_score["precision"]
+      epoch_smatch["recall"] += smatch_score["recall"]
+      epoch_smatch["best_f_score"] += smatch_score["best_f_score"]
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
-    epoch_smatch = epoch_smatch / no_batches
-    logged_text = get_logged_examples(vocabs, data_loader)
+    epoch_smatch = {score_name: score_value / no_batches for score_name, score_value in epoch_smatch.items()}
+    logged_text += amr_comparison_text
     return epoch_loss, epoch_smatch, logged_text
 
 def train_step(model: nn.Module,
                optimizer: Optimizer,
                vocabs: Vocabs,
                batch: Dict[str, torch.Tensor]):
-  inputs = batch['concepts']
-  inputs_lengths = batch['concepts_lengths']
-  gold_adj_mat = batch['adj_mat']
+  amr_ids, inputs, inputs_lengths, gold_adj_mat = get_gold_data(batch)
 
   optimizer.zero_grad()
   logits, predictions = model(inputs, inputs_lengths, gold_adj_mat)
@@ -134,6 +148,18 @@ def train_step(model: nn.Module,
   loss.backward()
   optimizer.step()
   return loss
+
+def write_results_on_tensorboard(train_writer: SummaryWriter, eval_writer: SummaryWriter,
+                                 epoch, losses, smatch, logged_text):
+  epoch_loss = losses['train_loss']
+  dev_loss = losses['dev_loss']
+
+  train_writer.add_scalar('loss', epoch_loss, epoch)
+  eval_writer.add_scalar('loss', dev_loss, epoch)
+  eval_writer.add_scalar('smatch_f_score', smatch["best_f_score"], epoch)
+  eval_writer.add_scalar('smatch_precision', smatch["precision"], epoch)
+  eval_writer.add_scalar('smatch_recall', smatch["recall"], epoch)
+  eval_writer.add_text('amr', logged_text, epoch)
 
 def train_model(model: nn.Module,
                 optimizer: Optimizer,
@@ -145,7 +171,6 @@ def train_model(model: nn.Module,
   model.train()
   for epoch in range(NO_EPOCHS):
     start_time = time.time()
-    i = 0
     epoch_loss = 0
     no_batches = 0
     for batch in train_data_loader:
@@ -153,26 +178,22 @@ def train_model(model: nn.Module,
       epoch_loss += batch_loss
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
-    dev_loss, smatch, logged_text = evaluate_model(model, vocabs, dev_data_loader)
+    dev_loss, smatch, logged_text = evaluate_model(model, dev_data_loader)
     model.train()
     end_time = time.time()
-    time_passed = end_time - start_time 
+    time_passed = end_time - start_time
+    losses = {'train_loss': epoch_loss, 'dev_loss': dev_loss}
+    write_results_on_tensorboard(train_writer, eval_writer, epoch, losses, smatch, logged_text)
     print('Epoch {} (took {:.2f} seconds)'.format(epoch+1, time_passed))
-    print('Train loss: {}, dev loss: {}, smatch: {} '.format(epoch_loss, dev_loss, smatch))
-    losses = {'train_loss': epoch_loss, 'dev_los': dev_loss}
-    train_writer.add_scalar('loss', epoch_loss, epoch)
-    eval_writer.add_scalar('loss', dev_loss, epoch)
-    eval_writer.add_scalar('smatch', smatch, epoch)
-    eval_writer.add_text('amr', logged_text, epoch)
+    print('Train loss: {}, dev loss: {}, smatch_f_score: {} '.format(epoch_loss, dev_loss, smatch["best_f_score"]))
 
 if __name__ == "__main__":
 
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   print('Training on device', device)
 
-
   train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-            'mt09sdl', 'proxy', 'wb', 'xinhua']
+             'mt09sdl', 'proxy', 'wb', 'xinhua']
   dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
   train_paths = get_paths('training', train_subsets)
   dev_paths = get_paths('dev', dev_subsets)
@@ -183,7 +204,7 @@ if __name__ == "__main__":
     train_paths, vocabs, device, seq2seq_setting=False, ordered=True)
   dev_dataset = AMRDataset(
     dev_paths, vocabs, device, seq2seq_setting=False, ordered=True)
-  
+
   train_data_loader = DataLoader(
     train_dataset, batch_size=BATCH_SIZE, collate_fn=train_dataset.collate_fn)
   dev_data_loader = DataLoader(
@@ -191,7 +212,7 @@ if __name__ == "__main__":
 
   model = HeadsSelection(vocabs.concept_vocab_size, HIDDEN_SIZE).to(device)
   optimizer = optim.Adam(model.parameters())
-  
+
   #Use --logdir temp/heads_selection for tensorboard dev upload
   tensorboard_dir = 'temp/heads_selection'
   if os.path.isdir(tensorboard_dir):
@@ -201,7 +222,7 @@ if __name__ == "__main__":
   os.makedirs(tensorboard_dir)
   train_writer = SummaryWriter(tensorboard_dir+"/train")
   eval_writer = SummaryWriter(tensorboard_dir+"/eval")
-  train_model(model, 
+  train_model(model,
     optimizer, vocabs, train_writer, eval_writer, train_data_loader, dev_data_loader)
   train_writer.close()
   eval_writer.close()

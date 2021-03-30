@@ -25,6 +25,13 @@ from models import HeadsSelection
 from evaluation.tensors_to_amr import get_unlabelled_amr_strings_from_tensors
 from smatch import score_amr_pairs
 
+import logging
+logger = logging.getLogger("penman")
+for handler in logger.handlers.copy():
+    logger.removeHandler(handler)
+logger.addHandler(logging.NullHandler())
+logger.propagate = False
+
 BATCH_SIZE = 32
 DEV_BATCH_SIZE = 32
 NO_EPOCHS = 20

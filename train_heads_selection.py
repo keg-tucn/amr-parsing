@@ -268,7 +268,9 @@ def main(_):
     train_dataset, batch_size=BATCH_SIZE, collate_fn=train_dataset.collate_fn)
   dev_data_loader = DataLoader(
     dev_dataset, batch_size=DEV_BATCH_SIZE, collate_fn=dev_dataset.collate_fn)
-
+  
+  print('Data loaded')
+   
   # Construct config object.
   cfg = get_default_config()
   if FLAGS.config:

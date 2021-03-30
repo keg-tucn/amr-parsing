@@ -3,6 +3,7 @@ import time
 import os
 import shutil
 import io
+import re
 
 import torch
 import torch.nn as nn
@@ -28,18 +29,21 @@ HIDDEN_SIZE = 40
 
 UNK_REL_LABEL = ':unk-label'
 
+#TODO: repace with constants from data_pipeline.
 AMR_ID = 'amr_id'
 GOLD_CONCEPTS = 'concepts'
 GOLD_CONCEPTS_LEN = 'concepts_lengths'
 GOLD_ADJ_MAT = 'adj_mat'
+GOLD_AMR_STR = 'amr_str'
 
 def get_gold_data(batch: torch.tensor):
   amr_ids = batch[AMR_ID]
   gold_concepts = batch[GOLD_CONCEPTS]
   gold_concepts_length = batch[GOLD_CONCEPTS_LEN]
   gold_adj_mat = batch[GOLD_ADJ_MAT]
+  gold_amr_str = batch[GOLD_AMR_STR]
 
-  return amr_ids, gold_concepts, gold_concepts_length, gold_adj_mat
+  return amr_ids, gold_concepts, gold_concepts_length, gold_adj_mat, gold_amr_str
 
 def compute_loss(vocabs: Vocabs, mask: torch.Tensor,
                  logits: torch.Tensor, gold_outputs: torch.Tensor):
@@ -90,22 +94,29 @@ def compute_smatch(gold_outputs, predictions):
 
   return smatch_score
 
+def replace_all_edge_labels(amr_str: str, new_edge_label: str):
+  """Replaces all edge labels in an AMR with a given edge and returns the
+  new AMR.
+  """
+  new_amr_str = re.sub(r':[^\s]*', new_edge_label, amr_str)
+  return new_amr_str
+
 def eval_step(model: nn.Module, batch: torch.tensor):
-  amr_ids, inputs, inputs_lengths, gold_adj_mat = get_gold_data(batch)
+  amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str = get_gold_data(batch)
 
   optimizer.zero_grad()
   logits, predictions = model(inputs, inputs_lengths)
   seq_len = inputs.shape[0]
   mask = HeadsSelection.create_mask(seq_len, inputs_lengths, False)
 
-  gold_outputs = get_unlabelled_amr_strings_from_tensors(
-    inputs, inputs_lengths, gold_adj_mat, vocabs, UNK_REL_LABEL)
+  # Remove the edge labels for the gold AMRs before doing the smatch.
+  gold_outputs = [replace_all_edge_labels(a, UNK_REL_LABEL) for a in gold_amr_str]
   predictions_strings = get_unlabelled_amr_strings_from_tensors(
     inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
 
   loss = compute_loss(vocabs, mask, logits, gold_adj_mat)
   smatch_score = compute_smatch(gold_outputs, predictions_strings)
-  amr_comparison_text = '  \n'.join([gold_outputs[0], predictions_strings[0]])
+  amr_comparison_text = '  \n'.join([gold_amr_str[0], predictions_strings[0]])
 
   return loss, smatch_score, amr_comparison_text
 
@@ -138,7 +149,7 @@ def train_step(model: nn.Module,
                optimizer: Optimizer,
                vocabs: Vocabs,
                batch: Dict[str, torch.Tensor]):
-  amr_ids, inputs, inputs_lengths, gold_adj_mat = get_gold_data(batch)
+  amr_ids, inputs, inputs_lengths, gold_adj_mat, _ = get_gold_data(batch)
 
   optimizer.zero_grad()
   logits, predictions = model(inputs, inputs_lengths, gold_adj_mat)

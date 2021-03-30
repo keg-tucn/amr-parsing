@@ -5,6 +5,8 @@ import shutil
 import io
 import re
 
+from absl import app
+from absl import flags
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -18,6 +20,7 @@ from data_pipeline.vocab import Vocabs
 from data_pipeline.dataset import PAD, EOS, UNK
 from data_pipeline.dataset import AMRDataset
 
+from config import get_default_config
 from models import HeadsSelection
 from evaluation.tensors_to_amr import get_unlabelled_amr_strings_from_tensors
 from smatch import score_amr_pairs
@@ -35,6 +38,28 @@ GOLD_CONCEPTS = 'concepts'
 GOLD_CONCEPTS_LEN = 'concepts_lengths'
 GOLD_ADJ_MAT = 'adj_mat'
 GOLD_AMR_STR = 'amr_str'
+
+FLAGS = flags.FLAGS
+flags.DEFINE_string('config',
+                    default=None,
+                    help=('Config file to overwrite default configs.'))
+flags.DEFINE_string('train_subsets',
+                    default=None,
+                    help=('Train subsets split by comma. Ex: bolt,proxy'))
+flags.DEFINE_string('dev_subsets',
+                    default=None,
+                    help=('Train subsets split by comma. Ex: bolt,proxy'))
+flags.DEFINE_integer('batch_size',
+                     default=32,
+                     short_name='b',
+                     help=('Batch size.'))
+flags.DEFINE_integer('dev_batch_size',
+                     default=32,
+                     help=('Dev batch size.'))
+flags.DEFINE_integer('no_epochs',
+                     short_name='e',
+                     default=20,
+                     help=('Number of epochs.'))
 
 def get_gold_data(batch: torch.tensor):
   amr_ids = batch[AMR_ID]
@@ -101,7 +126,10 @@ def replace_all_edge_labels(amr_str: str, new_edge_label: str):
   new_amr_str = re.sub(r':[^\s]*', new_edge_label, amr_str)
   return new_amr_str
 
-def eval_step(model: nn.Module, batch: torch.tensor):
+def eval_step(model: nn.Module,
+              optimizer: nn.Module,
+              vocabs: Vocabs,
+              batch: torch.tensor):
   amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str = get_gold_data(batch)
 
   optimizer.zero_grad()
@@ -121,6 +149,8 @@ def eval_step(model: nn.Module, batch: torch.tensor):
   return loss, smatch_score, amr_comparison_text
 
 def evaluate_model(model: nn.Module,
+                   optimizer: nn.Module,
+                   vocabs: Vocabs,
                    data_loader: DataLoader):
   model.eval()
   with torch.no_grad():
@@ -134,7 +164,8 @@ def evaluate_model(model: nn.Module,
     logged_text = "GOLD VS PREDICTED AMRS\n\n"
 
     for batch in data_loader:
-      loss, smatch_score, amr_comparison_text = eval_step(model, batch)
+      loss, smatch_score, amr_comparison_text = eval_step(
+        model, optimizer, vocabs, batch)
       epoch_loss += loss
       epoch_smatch["precision"] += smatch_score["precision"]
       epoch_smatch["recall"] += smatch_score["recall"]
@@ -174,13 +205,14 @@ def write_results_on_tensorboard(train_writer: SummaryWriter, eval_writer: Summa
 
 def train_model(model: nn.Module,
                 optimizer: Optimizer,
+                no_epochs: int,
                 vocabs: Vocabs,
                 train_writer: SummaryWriter,
                 eval_writer: SummaryWriter,
                 train_data_loader: DataLoader,
                 dev_data_loader: DataLoader):
   model.train()
-  for epoch in range(NO_EPOCHS):
+  for epoch in range(no_epochs):
     start_time = time.time()
     epoch_loss = 0
     no_batches = 0
@@ -189,7 +221,8 @@ def train_model(model: nn.Module,
       epoch_loss += batch_loss
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
-    dev_loss, smatch, logged_text = evaluate_model(model, dev_data_loader)
+    dev_loss, smatch, logged_text = evaluate_model(
+      model, optimizer, vocabs, dev_data_loader)
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time
@@ -198,14 +231,22 @@ def train_model(model: nn.Module,
     print('Epoch {} (took {:.2f} seconds)'.format(epoch+1, time_passed))
     print('Train loss: {}, dev loss: {}, smatch_f_score: {} '.format(epoch_loss, dev_loss, smatch["best_f_score"]))
 
-if __name__ == "__main__":
-
+def main(_):
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   print('Training on device', device)
 
-  train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-             'mt09sdl', 'proxy', 'wb', 'xinhua']
-  dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+  if FLAGS.train_subsets is None:
+    train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
+                      'mt09sdl', 'proxy', 'wb', 'xinhua']
+  else:
+    # Take subsets from flag passed.
+    train_subsets = FLAGS.train_subsets.split(',')
+  if FLAGS.dev_subsets is None:
+    dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+  else:
+    # Take subsets from flag passed.
+    dev_subsets = FLAGS.dev_subsets.split(',')
+
   train_paths = get_paths('training', train_subsets)
   dev_paths = get_paths('dev', dev_subsets)
 
@@ -221,7 +262,15 @@ if __name__ == "__main__":
   dev_data_loader = DataLoader(
     dev_dataset, batch_size=DEV_BATCH_SIZE, collate_fn=dev_dataset.collate_fn)
 
-  model = HeadsSelection(vocabs.concept_vocab_size, HIDDEN_SIZE).to(device)
+  # Construct config object.
+  cfg = get_default_config()
+  if FLAGS.config:
+    config_file_name = FLAGS.config
+    config_path = os.path.join('configs', config_file_name)
+    cfg.merge_from_file(config_path)
+    cfg.freeze()
+
+  model = HeadsSelection(vocabs.concept_vocab_size, cfg.HEAD_SELECTION).to(device)
   optimizer = optim.Adam(model.parameters())
 
   #Use --logdir temp/heads_selection for tensorboard dev upload
@@ -234,6 +283,11 @@ if __name__ == "__main__":
   train_writer = SummaryWriter(tensorboard_dir+"/train")
   eval_writer = SummaryWriter(tensorboard_dir+"/eval")
   train_model(model,
-    optimizer, vocabs, train_writer, eval_writer, train_data_loader, dev_data_loader)
+    optimizer, FLAGS.no_epochs, vocabs,
+    train_writer, eval_writer,
+    train_data_loader, dev_data_loader)
   train_writer.close()
   eval_writer.close()
+
+if __name__ == "__main__":
+  app.run(main)

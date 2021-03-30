@@ -16,7 +16,18 @@ _C.CONCEPT_IDENTIFICATION.LSTM_BASED.NUM_LAYERS = 1
 _C.CONCEPT_IDENTIFICATION.TRANSF_BASED = CN()
 #TODO: add transformer based configs.
 
-#TODO: add head selection configs.
+_C.HEAD_SELECTION = CN()
+# Embeddings dimension.
+_C.HEAD_SELECTION.EMB_DIM = 50
+# Hidden size.
+_C.HEAD_SELECTION.HIDDEN_SIZE = 40
+# Number of layers.
+_C.HEAD_SELECTION.NUM_LAYERS = 1
+# MLP Hidden size.
+_C.HEAD_SELECTION.DENSE_MLP_HIDDEN_SIZE = 30
+# Edge threshold.
+_C.HEAD_SELECTION.EDGE_THRESHOLD  = 0.5
+
 
 def get_default_config():
   return _C.clone()

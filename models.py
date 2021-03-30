@@ -4,11 +4,7 @@ import torch
 import torch.nn as nn
 from yacs.config import CfgNode
 
-DENSE_MLP_HIDDEN_SIZE = 30
 SAMPLING_RATIO = 2
-
-EDGE_THRESHOLD = 0.5
-
 #TODO: move this.
 BOS_IDX = 1
 
@@ -307,11 +303,12 @@ class DenseMLP(nn.Module):
   """
 
   def __init__(self,
-               node_repr_size:int):
+               node_repr_size:int,
+               config: CfgNode):
     super(DenseMLP, self).__init__()
-    self.Ua = nn.Linear(node_repr_size, DENSE_MLP_HIDDEN_SIZE, bias=False)
-    self.Wa = nn.Linear(node_repr_size, DENSE_MLP_HIDDEN_SIZE, bias=False)
-    self.va = nn.Linear(DENSE_MLP_HIDDEN_SIZE, 1, bias=False)
+    self.Ua = nn.Linear(node_repr_size, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
+    self.Wa = nn.Linear(node_repr_size, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
+    self.va = nn.Linear(config.DENSE_MLP_HIDDEN_SIZE, 1, bias=False)
 
 
   def forward(self, parent: torch.Tensor, child: torch.Tensor):
@@ -328,9 +325,9 @@ class DenseMLP(nn.Module):
 
 class EdgeScoring(nn.Module):
 
-  def __init__(self, hidden_size: int):
+  def __init__(self, config: CfgNode):
     super(EdgeScoring, self).__init__()
-    self.dense_mlp = DenseMLP(2 * hidden_size)
+    self.dense_mlp = DenseMLP(2 * config.HIDDEN_SIZE, config)
 
   def forward(self, concepts: torch.tensor):
     """
@@ -361,10 +358,13 @@ class HeadsSelection(nn.Module):
   edge scores.
   """
 
-  def __init__(self, concept_vocab_size, hidden_size: int):
+  def __init__(self, concept_vocab_size,
+               # config HEAD_SELECTION
+               config: CfgNode):
     super(HeadsSelection, self).__init__()
-    self.encoder = Encoder(concept_vocab_size, hidden_size, use_bilstm=True)
-    self.edge_scoring = EdgeScoring(hidden_size)
+    self.encoder = Encoder(concept_vocab_size, config, use_bilstm=True)
+    self.edge_scoring = EdgeScoring(config)
+    self.config = config
 
   @staticmethod
   def create_padding_mask(concepts_lengths: torch.tensor, seq_len: int):
@@ -495,5 +495,5 @@ class HeadsSelection(nn.Module):
     mask = self.create_mask(seq_len, concepts_lengths, self.training, gold_adj_mat)
     # TODO: would it make sense to instead weight the loss?
     # scores = scores.masked_fill(mask == 0, -float('inf'))
-    predictions = self.get_predictions(scores, EDGE_THRESHOLD)
+    predictions = self.get_predictions(scores, self.config.EDGE_THRESHOLD)
     return scores, predictions

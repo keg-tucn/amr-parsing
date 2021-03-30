@@ -2,3 +2,4 @@ penman
 absl-py
 torch
 tensorboard
+smatch

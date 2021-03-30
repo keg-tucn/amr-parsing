@@ -94,10 +94,11 @@ class AMRDataset(Dataset):
         self.adj_mat_list.append(adj_mat)
     # Order them by sentence length.
     if ordered:
-      zipped = list(zip(self.sentences_list, self.concepts_list, self.adj_mat_list))
+      zipped = list(
+        zip(self.ids, self.sentences_list, self.concepts_list, self.adj_mat_list))
       zipped.sort(key=lambda elem: len(elem[0]), reverse=True)
       ordered_lists = zip(*zipped)
-      self.sentences_list, self.concepts_list, self.adj_mat_list = ordered_lists
+      self.ids, self.sentences_list, self.concepts_list, self.adj_mat_list = ordered_lists
     # Filter them out by sentence length.
     if max_sen_len is not None:
       lengths = [len(s) for s in self.sentences_list]
@@ -123,11 +124,13 @@ class AMRDataset(Dataset):
     batch_adj_mats = []
     sentence_lengths = []
     concepts_lengths = []
+    amr_ids = []
     for entry in batch:
       amr_id, sentence, concepts, adj_mat = entry
       batch_sentences.append(sentence)
       batch_concepts.append(concepts)
       batch_adj_mats.append(adj_mat)
+      amr_ids.append(amr_id)
       sentence_lengths.append(len(sentence))
       concepts_lengths.append(len(concepts))
     # Get max lengths for padding.
@@ -157,7 +160,7 @@ class AMRDataset(Dataset):
       }
     else:
       new_batch = {
-        'amr_id': amr_id,
+        'amr_id': amr_ids,
         'concepts': torch.transpose(torch.stack(padded_concepts),0,1).to(self.device),
         # This is left on the cpu for 'pack_padded_sequence'.
         'concepts_lengths': torch.tensor(concepts_lengths),
@@ -175,7 +178,7 @@ if __name__ == "__main__":
   special_words = ([PAD, UNK], [PAD, UNK], [PAD, UNK, None])
   vocabs = Vocabs(paths, UNK, special_words, min_frequencies=(1, 1, 1))
 
-  dataset = AMRDataset(paths, vocabs)
+  dataset = AMRDataset(paths, vocabs, device='cpu', seq2seq_setting=False, ordered=True)
   
   #TODO: see if thr bactching could somehow be done by size (one option
   # would be to order the elements in the dataset, have fixed batches and
@@ -188,4 +191,4 @@ if __name__ == "__main__":
       break
     i+=1
     print('Batch ',i)
-    print(batch['sentence'].shape)
+    print(batch['concepts'].shape)

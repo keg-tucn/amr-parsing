@@ -1,10 +1,14 @@
 from typing import List
+import copy
+
 import torch
 from torch.utils.data import Dataset, DataLoader
-
 from torch.nn.functional import pad as torch_pad
+
 import penman
 from penman.models import noop
+from penman.surface import AlignmentMarker
+
 from data_pipeline.training_entry import TrainingEntry
 from data_pipeline.data_reading import extract_triples, get_paths
 from data_pipeline.vocab import Vocabs
@@ -13,6 +17,14 @@ PAD = '<pad>'
 UNK = '<unk>'
 EOS = '<eos>'
 PAD_IDX = 0
+
+AMR_ID_KEY = 'amr_id'
+SENTENCE_KEY = 'sentence'
+SENTENCE_LEN_KEY = 'sentence_lengts'
+CONCEPTS_KEY = 'concepts'
+CONCEPTS_LEN_KEY = 'concepts_lengths'
+ADJ_MAT_KEY = 'adj_mat'
+AMR_STR_KEY = 'amr_str'
 
 def add_eos(training_entry: TrainingEntry, eos_token: str):
   training_entry.sentence.append(eos_token)
@@ -42,6 +54,24 @@ def numericalize(training_entry: TrainingEntry,
     processed_adj_mat.append(processed_row)
   return processed_sentence, processed_concepts, processed_adj_mat
 
+def remove_alignments(g: penman.Graph):
+  """Creates a new penman graph AMR with no alignments. This is used if
+  the amr string is needed with no alignments (eg. for smatch).
+
+  Args:
+      g (penman.Graph): Input penman graph (that might contain alignments).
+
+  Returns:
+      Output penman graph (same as the input one, but with no alignments).
+  """
+  # Create a deep copy of the input to not modify that object.
+  new_g = copy.deepcopy(g)
+  for epidata in g.epidata.items():
+    triple, triple_data = epidata
+    new_data = [d for d in triple_data if not isinstance(d, AlignmentMarker)]
+    new_g.epidata[triple] = new_data
+  return new_g
+
 class AMRDataset(Dataset):
   """
   Dataset of sentence - amr entries, where the amrs are represented as a list
@@ -62,17 +92,19 @@ class AMRDataset(Dataset):
     super(AMRDataset, self).__init__()
     self.device = device
     self.seq2seq_setting = seq2seq_setting
-    self.sentences_list= []
-    self.concepts_list = []
-    self.adj_mat_list = []
     self.ids = []
-    self.amr_strings_by_id = {}
+    # Dictionary of amr id -> fields, where fields is a dict with the info
+    # for each example.
+    self.fields_by_id = {}
     for path in paths:
       triples = extract_triples(path)
       for triple in triples:
         id, sentence, amr_str = triple
-        self.amr_strings_by_id[id] = amr_str
         amr_penman_graph = penman.decode(amr_str, model=noop.model)
+        # Get the amr string (with no alignment info).
+        amr_penman_graph_no_align = remove_alignments(amr_penman_graph)
+        amr_str_no_align = penman.encode(amr_penman_graph, model=noop.model)
+        # Store the amr string with no alignment in a dictionary.
         training_entry = TrainingEntry(
           sentence=sentence.split(),
           g=amr_penman_graph,
@@ -82,55 +114,57 @@ class AMRDataset(Dataset):
           add_eos(training_entry, EOS)
         # Numericalize the training entry (str -> vocab ids).
         sentence, concepts, adj_mat = numericalize(training_entry, vocabs)
-        # Convert to pytorch tensors.
-        #TODO: should I use pytorch or numpy tensors?
-        sentence = torch.tensor(sentence, dtype=torch.long)
-        concepts = torch.tensor(concepts, dtype=torch.long)
-        adj_mat = torch.tensor(adj_mat, dtype=torch.long)
         # Collect the data.
         self.ids.append(id)
-        self.sentences_list.append(sentence)
-        self.concepts_list.append(concepts)
-        self.adj_mat_list.append(adj_mat)
+        field = {
+          SENTENCE_KEY: torch.tensor(sentence, dtype=torch.long),
+          CONCEPTS_KEY: torch.tensor(concepts, dtype=torch.long),
+          ADJ_MAT_KEY: torch.tensor(adj_mat, dtype=torch.long),
+          AMR_STR_KEY: amr_str_no_align
+        }
+        self.fields_by_id[id] = field
     # Order them by sentence length.
     if ordered:
-      zipped = list(
-        zip(self.ids, self.sentences_list, self.concepts_list, self.adj_mat_list))
-      zipped.sort(key=lambda elem: len(elem[0]), reverse=True)
-      ordered_lists = zip(*zipped)
-      self.ids, self.sentences_list, self.concepts_list, self.adj_mat_list = ordered_lists
+      # Sort dictionary items by sentence length.
+      sorted_dict = sorted(self.fields_by_id.items(),
+                           key=lambda item: len(item[1][SENTENCE_KEY]))
+      # Retrieve the sorted amr ids.
+      self.ids = [item[0] for item in sorted_dict]
     # Filter them out by sentence length.
     if max_sen_len is not None:
-      lengths = [len(s) for s in self.sentences_list]
-      self.sentences_list = [
-        self.sentences_list[i] for i in range(len(lengths)) if lengths[i] <= max_sen_len]
-      self.concepts_list = [
-        self.concepts_list[i] for i in range(len(lengths)) if lengths[i] <= max_sen_len]
-      self.adj_mat_list = [
-        self.adj_mat_list[i] for i in range(len(lengths)) if lengths[i] <= max_sen_len]
+      self.ids = [id for id in self.ids \
+                    if (len(self.fields_by_id[id][SENTENCE_KEY]) <= max_sen_len)]
     # Get max no of concepts.
-    concept_lengths = [len(c) for c in self.concepts_list]
+    concept_lengths = [len(self.fields_by_id[id][CONCEPTS_KEY]) for id in self.ids]
     self.max_concepts_length = max(concept_lengths)
 
   def __len__(self):
-    return len(self.sentences_list)
+    return len(self.ids)
 
   def __getitem__(self, item):
-    return self.ids[item], self.sentences_list[item], self.concepts_list[item],  self.adj_mat_list[item]
+    """Returns: id, sentence, concepts, adj_mat, amr_str."""
+    id = self.ids[item]
+    sentence = self.fields_by_id[id][SENTENCE_KEY]
+    concepts = self.fields_by_id[id][CONCEPTS_KEY]
+    adj_mat = self.fields_by_id[id][ADJ_MAT_KEY]
+    amr_str = self.fields_by_id[id][AMR_STR_KEY]
+    return id, sentence, concepts, adj_mat, amr_str
 
   def collate_fn(self, batch):
+    amr_ids = []
     batch_sentences = []
     batch_concepts = []
     batch_adj_mats = []
+    amr_strings = []
     sentence_lengths = []
     concepts_lengths = []
-    amr_ids = []
     for entry in batch:
-      amr_id, sentence, concepts, adj_mat = entry
+      amr_id, sentence, concepts, adj_mat, amr_str = entry
+      amr_ids.append(amr_id)
       batch_sentences.append(sentence)
       batch_concepts.append(concepts)
       batch_adj_mats.append(adj_mat)
-      amr_ids.append(amr_id)
+      amr_strings.append(amr_str)
       sentence_lengths.append(len(sentence))
       concepts_lengths.append(len(concepts))
     # Get max lengths for padding.
@@ -153,18 +187,19 @@ class AMRDataset(Dataset):
     # processing method for doing so after loading the data.
     if self.seq2seq_setting:
       new_batch = {
-        'sentence': torch.transpose(torch.stack(padded_sentences),0,1).to(self.device),
+        SENTENCE_KEY: torch.transpose(torch.stack(padded_sentences),0,1).to(self.device),
         # This is left on the cpu for 'pack_padded_sequence'.
-        'sentence_lengts': torch.tensor(sentence_lengths),
-        'concepts': torch.transpose(torch.stack(padded_concepts),0,1).to(self.device)
+        SENTENCE_LEN_KEY: torch.tensor(sentence_lengths),
+        CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts),0,1).to(self.device)
       }
     else:
       new_batch = {
-        'amr_id': amr_ids,
-        'concepts': torch.transpose(torch.stack(padded_concepts),0,1).to(self.device),
+        AMR_ID_KEY: amr_ids,
+        CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts),0,1).to(self.device),
         # This is left on the cpu for 'pack_padded_sequence'.
-        'concepts_lengths': torch.tensor(concepts_lengths),
-        'adj_mat': torch.stack(padded_adj_mats).to(self.device)
+        CONCEPTS_LEN_KEY: torch.tensor(concepts_lengths),
+        ADJ_MAT_KEY: torch.stack(padded_adj_mats).to(self.device),
+        AMR_STR_KEY: amr_strings
       }
     return new_batch
 
@@ -191,4 +226,8 @@ if __name__ == "__main__":
       break
     i+=1
     print('Batch ',i)
-    print(batch['concepts'].shape)
+    print('Amr ids')
+    print(batch[AMR_ID_KEY])
+    print('Amrs')
+    print(batch[AMR_STR_KEY])
+    print(batch[CONCEPTS_KEY].shape)

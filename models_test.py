@@ -7,7 +7,7 @@ from models import DenseMLP, EdgeScoring, HeadsSelection
 from models import EMB_DIM, HIDDEN_SIZE
 
 class ModelsTest(absltest.TestCase):
-    
+
 
   def test_encoder(self):
     num_layers = 1

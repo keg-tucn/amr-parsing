@@ -2,7 +2,6 @@ from typing import Tuple
 import random
 import torch
 import torch.nn as nn
-import numpy as np
 
 EMB_DIM = 50
 HIDDEN_SIZE = 40
@@ -72,7 +71,7 @@ class AdditiveAttention(nn.Module):
     Returns:
         Context vector: (batch size, HIDDEN_SIZE).
     """
-    
+
     seq_len = encoder_states.shape[0]
     # [ input seq len, batch_size, lstm size] -> [batch_size, input seq len, lstm size]
     encoder_states = encoder_states.transpose(0, 1)
@@ -119,7 +118,7 @@ class DecoderStep(nn.Module):
 
   def __init__(self, output_vocab_size: int, hidden_size: int):
     super(DecoderStep, self).__init__()
-    # Lstm input has size EMB_DIM + HIDDEN_SIZE (will take as input the 
+    # Lstm input has size EMB_DIM + HIDDEN_SIZE (will take as input the
     # previous embedding - EMB_DIM and the context vector - HIDDEN_SIZE).
     self.lstm_cell = nn.LSTMCell(EMB_DIM + hidden_size, hidden_size)
     self.additive_attention = AdditiveAttention(hidden_size)
@@ -196,7 +195,7 @@ class Decoder(nn.Module):
     initial_c = self.initial_state_layer_h(enc_c)
     return (initial_h, initial_c)
 
-  
+
   def forward(self,
               encoder_output: Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
               attention_mask: torch.Tensor,
@@ -229,7 +228,7 @@ class Decoder(nn.Module):
     decoder_state = self.compute_initial_decoder_state(encoder_output[1])
     # Create a batch of initial tokens.
     previous_token = torch.full((batch_size,), BOS_IDX).to(device=self.device)
-    
+
 
     all_logits = torch.zeros(
       (output_seq_len, batch_size, self.output_vocab_size)).to(device=self.device)
@@ -278,7 +277,7 @@ class Seq2seq(nn.Module):
     """Forward seq2seq.
 
     Args:
-        input_sequence (torch.Tensor): Input sequence of shape 
+        input_sequence (torch.Tensor): Input sequence of shape
           (input seq len, batch size).
         input_lengths: Lengths of the sequences in the batch (batch size).
         gold_output_sequence: Output sequence (output seq len, batch size).
@@ -439,7 +438,7 @@ class HeadsSelection(nn.Module):
       training: bool for training flow.
       gold_adj_mat: Gold adj mat (matrix of relations), only sent on training
         of shape (batch size, seq len, seq len).
-    
+
     Returns mask of shape (batch size, seq len, seq len).
     """
     mat_sent_on_training = training and gold_adj_mat is not None

@@ -1,22 +1,29 @@
-from typing import Tuple
+from typing import Tuple, Dict
 import random
 import torch
 import torch.nn as nn
 from yacs.config import CfgNode
 
-SAMPLING_RATIO = 2
+from data_pipeline.glove_embeddings import get_weight_matrix
+
 #TODO: move this.
 BOS_IDX = 1
 
 class Encoder(nn.Module):
 
 
-  def __init__(self, input_vocab_size, config: CfgNode, use_bilstm=False):
+  def __init__(self, input_vocab_size, config: CfgNode, use_bilstm=False, glove_embeddings: Dict=None):
     super(Encoder, self).__init__()
     self.embedding = nn.Embedding(input_vocab_size, config.EMB_DIM)
-    self.lstm = nn.LSTM(
-      config.EMB_DIM, config.HIDDEN_SIZE, config.NUM_LAYERS,
-      bidirectional=use_bilstm)
+    self.use_glove = config.GLOVE_EMB_DIM != 0 and glove_embeddings is not None
+
+    if self.use_glove:
+      self.glove = nn.Embedding(len(glove_embeddings.keys()), config.GLOVE_EMB_DIM)
+      weight_matrix = get_weight_matrix(glove_embeddings, config.GLOVE_EMB_DIM)
+      self.glove.load_state_dict({'weight': weight_matrix})
+      self.glove.weight.requires_grad = False
+    emb_dim = config.EMB_DIM + config.GLOVE_EMB_DIM if self.use_glove else config.EMB_DIM
+    self.lstm = nn.LSTM(emb_dim, config.HIDDEN_SIZE, config.NUM_LAYERS, bidirectional=use_bilstm)
 
   def forward(self, inputs: torch.Tensor, input_lengths: torch.Tensor):
     """
@@ -33,6 +40,9 @@ class Encoder(nn.Module):
       is.
     """
     embedded_inputs = self.embedding(inputs)
+    if self.use_glove:
+      glove_embedded_inputs = self.glove(inputs)
+      embedded_inputs = torch.cat((embedded_inputs, glove_embedded_inputs), dim=-1)
     #TODO: see if enforce_sorted would help to be True (eg efficiency).
     packed_embedded = nn.utils.rnn.pack_padded_sequence(
       embedded_inputs, input_lengths, enforce_sorted = False)
@@ -257,11 +267,12 @@ class Seq2seq(nn.Module):
                input_vocab_size: int,
                output_vocab_size: int,
                # config CONCEPT_IDENTIFICATION.LSTM_BASED
-               config: CfgNode, 
+               config: CfgNode,
+               glove_embeddings: Dict = None,
                device="cpu"):
     super(Seq2seq, self).__init__()
     hidden_size = config.HIDDEN_SIZE
-    self.encoder = Encoder(input_vocab_size, config)
+    self.encoder = Encoder(input_vocab_size, config, glove_embeddings=glove_embeddings)
     self.decoder = Decoder(output_vocab_size, config, device=device)
     self.device = device
 
@@ -286,7 +297,7 @@ class Seq2seq(nn.Module):
     Returns:
       predictions of shape (out seq len, batch size, output no of classes).
     """
-    encoder_output = self.encoder(input_sequence, input_lengths)
+    encoder_output, _ = self.encoder(input_sequence, input_lengths)
     input_seq_len = input_sequence.shape[0]
     attention_mask = self.create_mask(input_lengths, input_seq_len)
     if self.training:
@@ -360,105 +371,13 @@ class HeadsSelection(nn.Module):
 
   def __init__(self, concept_vocab_size,
                # config HEAD_SELECTION
-               config: CfgNode):
+               config: CfgNode,
+               glove_embeddings: Dict=None):
     super(HeadsSelection, self).__init__()
-    self.encoder = Encoder(concept_vocab_size, config, use_bilstm=True)
+    self.encoder = Encoder(concept_vocab_size, config,
+                           use_bilstm=True, glove_embeddings=glove_embeddings)
     self.edge_scoring = EdgeScoring(config)
     self.config = config
-
-  @staticmethod
-  def create_padding_mask(concepts_lengths: torch.tensor, seq_len: int):
-    """
-    Args:
-      concepts_lengths: Batch of concept sequence lengths (batch size).
-      seq_len: Maximum seq length.
-
-    Returns:
-      Batch of padding masks, with shape (batch size, max len, max len), where
-      each padding mask has False where the padding is and True otherwise, that
-      is the submatrix of size (concept len, concept len) is all True.
-    """
-    arr_range = torch.arange(seq_len)
-    # Create sequence mask.
-    mask_1d = arr_range.unsqueeze(dim=0) < concepts_lengths.unsqueeze(dim=1)
-    # Create 2d mask for each element in the batch by multiplying a repeated
-    # vector with its transpose.
-    x = mask_1d.unsqueeze(1).repeat(1, seq_len, 1)
-    y = x.transpose(1, 2)
-    mask = x * y
-    return mask
-
-  @staticmethod
-  def create_sampling_mask(gold_adj_mat: torch.tensor,
-                           sampling_ratio: int = SAMPLING_RATIO):
-    """Create sampling mask (for balancing negative and positive classes).
-    Args:
-      gold_adj_mat: Gold adjacency matrix (batch size, seq len, seq len).
-      sampling_ratio: How many negative edges should be sampled for a positive
-        edge. We sample this at concept level (if a concept has n heads, we
-        sample sampling_ration * n non-heads).
-    Returns:
-      Mask of boolean values with shape (batch size, seq len, seq len).
-    """
-    #TODO: implement this!!!!
-    # Dummy implementation for now.
-    mask = torch.full(gold_adj_mat.shape, True)
-    return mask
-
-  @staticmethod
-  def create_fake_root_mask(batch_size, seq_len, root_idx = 0):
-    """
-    Args:
-      batch_size Batch size.
-      seq_len: Seq len.
-      root_idx: Index of the root in the scores matrix.
-
-    Returns:
-      Boolean mask ensuring the root cannot be a child of another concept,
-      which means the root column should be False.
-    """
-    mask = torch.full((batch_size, seq_len, seq_len), True)
-    mask[:,:,root_idx] = False
-    return mask
-
-  @staticmethod
-  def create_mask(seq_len: int,
-                  concepts_lengths: torch.tensor,
-                  training: bool,
-                  gold_adj_mat = None):
-    """
-    Creates a mask for masking scores (the scores will be masked with -inf to
-    obtain 0 when passing through the sigmoid). This mask will be a mask of
-    boolean values:
-      False: masking out
-      True: masking in
-    Need to mask several things:
-      padding -> the sequences of concepts are padded.
-      sampling -> we don't want to use all non-existing arcs, we will "sample"
-        from them by masking out the ones we don't want to use.
-      fake root -> the fake root should not have any parent.
-
-    Args:
-      seq_len: max length of concepts sequence.
-      concepts_lengths: Batch of concept sequence lengths (batch size).
-      training: bool for training flow.
-      gold_adj_mat: Gold adj mat (matrix of relations), only sent on training
-        of shape (batch size, seq len, seq len).
-
-    Returns mask of shape (batch size, seq len, seq len).
-    """
-    mat_sent_on_training = training and gold_adj_mat is not None
-    mat_not_sent_on_inference = not training and gold_adj_mat is None
-    assert mat_sent_on_training or mat_not_sent_on_inference
-    batch_size = concepts_lengths.shape[0]
-    mask = HeadsSelection.create_padding_mask(concepts_lengths, seq_len)
-    if training:
-      sampling_mask = HeadsSelection.create_sampling_mask(gold_adj_mat)
-      mask = mask * sampling_mask
-    fake_root_mask = HeadsSelection.create_fake_root_mask(
-      batch_size, seq_len)
-    mask = mask * fake_root_mask
-    return mask
 
   @staticmethod
   def get_predictions(score_mat: torch.tensor, threshold: float = 0.5):
@@ -476,8 +395,7 @@ class HeadsSelection(nn.Module):
 
   def forward(self,
               concepts: torch.tensor,
-              concepts_lengths: torch.tensor,
-              gold_adj_mat = None):
+              concepts_lengths: torch.tensor):
     """
     Args:
       concepts (torch.tensor): Concepts (seq len, batch size).
@@ -488,12 +406,8 @@ class HeadsSelection(nn.Module):
     Returns:
       Edge scores (batch size, seq len, seq len).
     """
-    seq_len = concepts.shape[0]
     encoded_concepts, _ = self.encoder(concepts, concepts_lengths)
     encoded_concepts = encoded_concepts.transpose(0,1)
     scores = self.edge_scoring(encoded_concepts)
-    mask = self.create_mask(seq_len, concepts_lengths, self.training, gold_adj_mat)
-    # TODO: would it make sense to instead weight the loss?
-    # scores = scores.masked_fill(mask == 0, -float('inf'))
     predictions = self.get_predictions(scores, self.config.EDGE_THRESHOLD)
     return scores, predictions

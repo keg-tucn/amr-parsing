@@ -18,7 +18,11 @@ from torch.utils.tensorboard import SummaryWriter
 from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
 from data_pipeline.dataset import PAD, EOS, UNK
+from data_pipeline.dataset import AMR_ID_KEY, CONCEPTS_KEY, CONCEPTS_LEN_KEY,\
+  GLOVE_CONCEPTS_KEY, ADJ_MAT_KEY, AMR_STR_KEY
 from data_pipeline.dataset import AMRDataset
+from data_pipeline.glove_embeddings import GloVeEmbeddings
+from arcs_masking import create_mask
 
 from config import get_default_config
 from models import HeadsSelection
@@ -33,13 +37,6 @@ logger.addHandler(logging.NullHandler())
 logger.propagate = False
 
 UNK_REL_LABEL = ':unk-label'
-
-#TODO: repace with constants from data_pipeline.
-AMR_ID = 'amr_id'
-GOLD_CONCEPTS = 'concepts'
-GOLD_CONCEPTS_LEN = 'concepts_lengths'
-GOLD_ADJ_MAT = 'adj_mat'
-GOLD_AMR_STR = 'amr_str'
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('config',
@@ -62,17 +59,21 @@ flags.DEFINE_integer('no_epochs',
                      short_name='e',
                      default=20,
                      help=('Number of epochs.'))
+flags.DEFINE_boolean('use_glove',
+                     default=False,
+                     help=('Flag which tells whether model should use GloVe Embeddings or not.'))
 
 def get_gold_data(batch: torch.tensor):
-  amr_ids = batch[AMR_ID]
-  gold_concepts = batch[GOLD_CONCEPTS]
-  gold_concepts_length = batch[GOLD_CONCEPTS_LEN]
-  gold_adj_mat = batch[GOLD_ADJ_MAT]
-  gold_amr_str = batch[GOLD_AMR_STR]
+  amr_ids = batch[AMR_ID_KEY]
+  gold_concepts = batch[CONCEPTS_KEY]
+  gold_concepts_length = batch[CONCEPTS_LEN_KEY]
+  gold_adj_mat = batch[ADJ_MAT_KEY]
+  gold_amr_str = batch[AMR_STR_KEY]
+  glove_concepts = batch[GLOVE_CONCEPTS_KEY]
 
-  return amr_ids, gold_concepts, gold_concepts_length, gold_adj_mat, gold_amr_str
+  return amr_ids, gold_concepts, gold_concepts_length, gold_adj_mat, gold_amr_str, glove_concepts
 
-def compute_loss(vocabs: Vocabs, mask: torch.Tensor,
+def compute_loss(vocabs: Vocabs, concepts_lengths: torch.Tensor,
                  logits: torch.Tensor, gold_outputs: torch.Tensor):
   """
   Args:
@@ -89,6 +90,7 @@ def compute_loss(vocabs: Vocabs, mask: torch.Tensor,
   pad_idx = vocabs.relation_vocab[PAD]
   binary_outputs = (gold_outputs != no_rel_index) * (gold_outputs != pad_idx)
   binary_outputs = binary_outputs.type(torch.FloatTensor)
+  mask = create_mask(gold_outputs, concepts_lengths)
   weights = mask.type(torch.FloatTensor)
   flattened_logits = logits.flatten()
   flattened_binary_outputs = binary_outputs.flatten()
@@ -133,23 +135,21 @@ def eval_step(model: nn.Module,
               vocabs: Vocabs,
               device: str,
               batch: torch.tensor):
-  amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str = get_gold_data(batch)
+  amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, glove_concepts = get_gold_data(batch)
 
   optimizer.zero_grad()
   inputs_device = inputs.to(device)
   gold_adj_mat_device = gold_adj_mat.to(device)
   logits, predictions = model(inputs_device, inputs_lengths)
-  seq_len = inputs.shape[0]
-  mask = HeadsSelection.create_mask(seq_len, inputs_lengths, False)
 
   # Remove the edge labels for the gold AMRs before doing the smatch.
   gold_outputs = [replace_all_edge_labels(a, UNK_REL_LABEL) for a in gold_amr_str]
   predictions_strings = get_unlabelled_amr_strings_from_tensors(
     inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
 
-  loss = compute_loss(vocabs, mask, logits, gold_adj_mat_device)
+  loss = compute_loss(vocabs, inputs_lengths, logits, gold_adj_mat_device)
   smatch_score = compute_smatch(gold_outputs, predictions_strings)
-  amr_comparison_text = '  \n'.join([gold_amr_str[0], predictions_strings[0]])
+  amr_comparison_text = '  \n'.join([gold_amr_str[0], ' VERSUS', predictions_strings[0]])
 
   return loss, smatch_score, amr_comparison_text
 
@@ -167,7 +167,7 @@ def evaluate_model(model: nn.Module,
       "recall": 0.0,
       "best_f_score": 0.0
     }
-    logged_text = "GOLD VS PREDICTED AMRS\n\n"
+    logged_text = "GOLD VS PREDICTED AMRS\n"
 
     for batch in data_loader:
       loss, smatch_score, amr_comparison_text = eval_step(
@@ -176,10 +176,12 @@ def evaluate_model(model: nn.Module,
       epoch_smatch["precision"] += smatch_score["precision"]
       epoch_smatch["recall"] += smatch_score["recall"]
       epoch_smatch["best_f_score"] += smatch_score["best_f_score"]
+      logged_text += 'Batch ' + str(no_batches) + ':\n'
+      logged_text += amr_comparison_text + '\n----\n'
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
     epoch_smatch = {score_name: score_value / no_batches for score_name, score_value in epoch_smatch.items()}
-    logged_text += amr_comparison_text
+    logged_text = logged_text.replace('\n', '\n\n')
     return epoch_loss, epoch_smatch, logged_text
 
 def train_step(model: nn.Module,
@@ -187,16 +189,14 @@ def train_step(model: nn.Module,
                vocabs: Vocabs,
                device: str,
                batch: Dict[str, torch.Tensor]):
-  amr_ids, inputs, inputs_lengths, gold_adj_mat, _ = get_gold_data(batch)
+  amr_ids, inputs, inputs_lengths, gold_adj_mat, _, _ = get_gold_data(batch)
 
   optimizer.zero_grad()
   # Move to trainig device (eg. cuda).
   inputs_device = inputs.to(device)
   gold_adj_mat_device = gold_adj_mat.to(device)
-  logits, predictions = model(inputs_device, inputs_lengths, gold_adj_mat_device)
-  seq_len = inputs.shape[0]
-  mask = HeadsSelection.create_mask(seq_len, inputs_lengths, True, gold_adj_mat_device)
-  loss = compute_loss(vocabs, mask, logits, gold_adj_mat_device)
+  logits, predictions = model(inputs_device, inputs_lengths)
+  loss = compute_loss(vocabs, inputs_lengths, logits, gold_adj_mat_device)
   loss.backward()
   optimizer.step()
   return loss
@@ -261,12 +261,17 @@ def main(_):
   train_paths = get_paths('training', train_subsets)
   dev_paths = get_paths('dev', dev_subsets)
 
+  # Construct config object.
+  cfg = get_default_config()
+
   special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
   vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))
+  glove_embeddings = GloVeEmbeddings(cfg.HEAD_SELECTION.GLOVE_EMB_DIM, UNK, [PAD, EOS, UNK]) \
+    if FLAGS.use_glove else None
   train_dataset = AMRDataset(
-    train_paths, vocabs, device, seq2seq_setting=False, ordered=True)
+    train_paths, vocabs, device, seq2seq_setting=False, ordered=True, glove=glove_embeddings)
   dev_dataset = AMRDataset(
-    dev_paths, vocabs, device, seq2seq_setting=False, ordered=True)
+    dev_paths, vocabs, device, seq2seq_setting=False, ordered=True, glove=glove_embeddings)
 
   train_data_loader = DataLoader(
     train_dataset, batch_size=FLAGS.batch_size, collate_fn=train_dataset.collate_fn)
@@ -274,16 +279,15 @@ def main(_):
     dev_dataset, batch_size=FLAGS.dev_batch_size, collate_fn=dev_dataset.collate_fn)
   
   print('Data loaded')
-   
-  # Construct config object.
-  cfg = get_default_config()
+
   if FLAGS.config:
     config_file_name = FLAGS.config
     config_path = os.path.join('configs', config_file_name)
     cfg.merge_from_file(config_path)
     cfg.freeze()
 
-  model = HeadsSelection(vocabs.concept_vocab_size, cfg.HEAD_SELECTION).to(device)
+  model = HeadsSelection(vocabs.concept_vocab_size, cfg.HEAD_SELECTION,
+                         glove_embeddings.embeddings_vocab if FLAGS.use_glove else None).to(device)
   optimizer = optim.Adam(model.parameters())
 
   #Use --logdir temp/heads_selection for tensorboard dev upload

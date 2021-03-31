@@ -1,10 +1,9 @@
 from absl.testing import absltest
-import numpy as np
 import torch
 
 from models import Encoder, AdditiveAttention, DecoderStep, Decoder, Seq2seq
 from models import DenseMLP, EdgeScoring, HeadsSelection
-from models import EMB_DIM, HIDDEN_SIZE
+from config import get_default_config
 
 class ModelsTest(absltest.TestCase):
 
@@ -12,7 +11,8 @@ class ModelsTest(absltest.TestCase):
   def test_encoder(self):
     num_layers = 1
     token_vocab_size = 10
-    hidden_size = 15
+    cfg = get_default_config()
+    hidden_size = cfg.CONCEPT_IDENTIFICATION.LSTM_BASED.HIDDEN_SIZE
     inputs = [
       [3, 5],
       [7, 2],
@@ -21,7 +21,7 @@ class ModelsTest(absltest.TestCase):
     ]
     inputs = torch.tensor(inputs)
     seq_lengths = torch.tensor([4,2])
-    encoder = Encoder(token_vocab_size, hidden_size)
+    encoder = Encoder(token_vocab_size, cfg.CONCEPT_IDENTIFICATION.LSTM_BASED)
     outputs = encoder(inputs, seq_lengths)
     encoder_states = outputs[0]
     last_encoder_state = outputs[1]
@@ -35,7 +35,8 @@ class ModelsTest(absltest.TestCase):
       device = "cuda"
       num_layers = 1
       token_vocab_size = 10
-      hidden_size = 15
+      cfg = get_default_config()
+      hidden_size = cfg.CONCEPT_IDENTIFICATION.LSTM_BASED.HIDDEN_SIZE
       inputs = [
         [3, 5],
         [7, 2],
@@ -45,7 +46,7 @@ class ModelsTest(absltest.TestCase):
       inputs = torch.tensor(inputs).to(device)
       # This seems to have to stay on the cpu.
       seq_lengths = torch.tensor([4,2])
-      encoder = Encoder(token_vocab_size, hidden_size).to(device)
+      encoder = Encoder(token_vocab_size, cfg.CONCEPT_IDENTIFICATION.LSTM_BASED).to(device)
       outputs = encoder(inputs, seq_lengths)
       encoder_states = outputs[0]
       last_encoder_state = outputs[1]
@@ -58,7 +59,8 @@ class ModelsTest(absltest.TestCase):
   def test_encoder_bilstm(self):
     num_layers = 1
     token_vocab_size = 10
-    hidden_size = 15
+    cfg = get_default_config()
+    hidden_size = cfg.CONCEPT_IDENTIFICATION.LSTM_BASED.HIDDEN_SIZE
     inputs = [
       [3, 5],
       [7, 2],
@@ -66,7 +68,7 @@ class ModelsTest(absltest.TestCase):
     ]
     inputs = torch.tensor(inputs)
     seq_lengths = torch.tensor([3,2])
-    encoder = Encoder(token_vocab_size, hidden_size, use_bilstm=True)
+    encoder = Encoder(token_vocab_size, cfg.CONCEPT_IDENTIFICATION.LSTM_BASED, use_bilstm=True)
     outputs = encoder(inputs, seq_lengths)
     encoder_states = outputs[0]
     last_encoder_state = outputs[1]
@@ -111,7 +113,8 @@ class ModelsTest(absltest.TestCase):
     output_vocab_size = 10
     batch_size = 3
     input_seq_len = 5
-    hidden_size = 15
+    cfg = get_default_config()
+    hidden_size = cfg.CONCEPT_IDENTIFICATION.LSTM_BASED.HIDDEN_SIZE
     mask = torch.tensor([
       [True, True, True, False, False],
       [True, True, True, True, True],
@@ -122,7 +125,7 @@ class ModelsTest(absltest.TestCase):
     previous_state_c = torch.zeros(batch_size, hidden_size)
     previous_state = (previous_state_h, previous_state_c)
     encoder_states = torch.zeros(input_seq_len, batch_size, hidden_size)
-    decoder_step = DecoderStep(output_vocab_size, hidden_size)
+    decoder_step = DecoderStep(output_vocab_size, cfg.CONCEPT_IDENTIFICATION.LSTM_BASED)
     decoder_state, predictions = decoder_step(
       decoder_input, previous_state, encoder_states, mask)
     self.assertEqual(decoder_state[0].shape, (batch_size, hidden_size))
@@ -135,7 +138,8 @@ class ModelsTest(absltest.TestCase):
     input_seq_len = 5
     output_seq_len = 7
     num_layers = 1
-    hidden_size = 15
+    cfg = get_default_config()
+    hidden_size = cfg.CONCEPT_IDENTIFICATION.LSTM_BASED.HIDDEN_SIZE
     mask = torch.tensor([
       [True, True, True, False, False],
       [True, True, True, True, True],
@@ -147,7 +151,7 @@ class ModelsTest(absltest.TestCase):
       torch.zeros(num_layers, batch_size, hidden_size))
     encoder_output = (encoder_states, encoder_last_state)
     decoder_inputs = torch.full((output_seq_len, batch_size), 0)
-    decoder_model = Decoder(output_vocab_size, hidden_size)
+    decoder_model = Decoder(output_vocab_size, cfg.CONCEPT_IDENTIFICATION.LSTM_BASED)
     decoder_model.train()
     logits, predictions = decoder_model(encoder_output, mask, decoder_inputs)
     self.assertEqual(logits.shape,
@@ -160,7 +164,8 @@ class ModelsTest(absltest.TestCase):
     input_seq_len = 5
     max_output_seq_len = 7
     num_layers = 1
-    hidden_size = 15
+    cfg = get_default_config()
+    hidden_size = cfg.CONCEPT_IDENTIFICATION.LSTM_BASED.HIDDEN_SIZE
     mask = torch.tensor([
       [True, True, True, False, False],
       [True, True, True, True, True],
@@ -171,7 +176,7 @@ class ModelsTest(absltest.TestCase):
       torch.zeros(num_layers, batch_size, hidden_size),
       torch.zeros(num_layers, batch_size, hidden_size))
     encoder_output = (encoder_states, encoder_last_state)
-    decoder_model = Decoder(output_vocab_size, hidden_size)
+    decoder_model = Decoder(output_vocab_size, cfg.CONCEPT_IDENTIFICATION.LSTM_BASED)
     decoder_model.eval()
     logits, predictions = decoder_model(encoder_output,
                                 mask,
@@ -186,10 +191,11 @@ class ModelsTest(absltest.TestCase):
     output_seq_len = 5
     input_vocab_size = 10
     output_vocab_size = 20
+    cfg = get_default_config()
     inputs = torch.zeros((input_seq_len, batch_size)).type(torch.LongTensor)
     input_lengths = torch.tensor([2, 4, 1])
     gold_outputs = torch.zeros((output_seq_len, batch_size)).type(torch.LongTensor)
-    seq2seq_model = Seq2seq(input_vocab_size, output_vocab_size)
+    seq2seq_model = Seq2seq(input_vocab_size, output_vocab_size, cfg.CONCEPT_IDENTIFICATION.LSTM_BASED)
     seq2seq_model.train()
     logits, predictions = seq2seq_model(inputs, input_lengths, gold_outputs)
     self.assertEqual(logits.shape,
@@ -204,12 +210,13 @@ class ModelsTest(absltest.TestCase):
       output_seq_len = 5
       input_vocab_size = 10
       output_vocab_size = 20
+      cfg = get_default_config()
       inputs = torch.zeros((input_seq_len, batch_size)).type(torch.LongTensor).to(device)
       input_lengths = torch.tensor([2, 4, 1])
       gold_outputs = torch.zeros(
         (output_seq_len, batch_size)).type(torch.LongTensor).to(device)
       seq2seq_model = Seq2seq(
-        input_vocab_size, output_vocab_size, device=device).to(device)
+        input_vocab_size, output_vocab_size, cfg.CONCEPT_IDENTIFICATION.LSTM_BASED, device=device).to(device)
       seq2seq_model.train()
       logits, predictions = seq2seq_model(inputs, input_lengths, gold_outputs)
       self.assertEqual(logits.shape,
@@ -220,7 +227,8 @@ class ModelsTest(absltest.TestCase):
   def test_dense_mlp(self):
     node_repr_size = 5
     batch_size = 3
-    dense_mlp = DenseMLP(node_repr_size=node_repr_size)
+    cfg = get_default_config()
+    dense_mlp = DenseMLP(node_repr_size, cfg.HEAD_SELECTION)
     parent = torch.zeros((batch_size, node_repr_size))
     child = torch.zeros((batch_size, node_repr_size))
     edge_repr = dense_mlp(parent, child)
@@ -229,9 +237,10 @@ class ModelsTest(absltest.TestCase):
   def test_edge_scoring(self):
     batch_size = 2
     no_of_concepts = 3
-    hidden_size = 15
+    cfg = get_default_config()
+    hidden_size = cfg.HEAD_SELECTION.HIDDEN_SIZE
     concepts = torch.zeros((batch_size, no_of_concepts, 2*hidden_size))
-    edge_scoring = EdgeScoring(hidden_size)
+    edge_scoring = EdgeScoring(cfg.HEAD_SELECTION)
     scores = edge_scoring(concepts)
     self.assertEqual(scores.shape, (batch_size, no_of_concepts, no_of_concepts))
 
@@ -239,7 +248,7 @@ class ModelsTest(absltest.TestCase):
     batch_size = 2
     concept_vocab_size = 10
     seq_len = 3
-    hidden_size = 15
+    cfg = get_default_config()
     concepts = [
       #batch ex 1 (amr1)
       [1, 3, 3],
@@ -249,11 +258,12 @@ class ModelsTest(absltest.TestCase):
     concepts = torch.tensor(concepts)
     concepts = concepts.transpose(0,1)
     concepts_lengths = torch.tensor([3, 2])
-    head_selection = HeadsSelection(concept_vocab_size, hidden_size)
+    head_selection = HeadsSelection(concept_vocab_size, cfg.HEAD_SELECTION)
     head_selection.eval()
-    scores, predictions = head_selection(concepts, concepts_lengths)
+    scores, predictions, mask = head_selection(concepts, concepts_lengths)
     self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
     self.assertEqual(predictions.shape, (batch_size, seq_len, seq_len))
+    self.assertEqual(mask.shape, (batch_size, seq_len, seq_len))
 
   def test_edge_prediction(self):
     scores = [[[-0.0740, 0.0122, -0.0039],
@@ -280,7 +290,7 @@ class ModelsTest(absltest.TestCase):
     batch_size = 2
     concept_vocab_size = 10
     seq_len = 3
-    hidden_size = 15
+    cfg = get_default_config()
     concepts = [
       #batch ex 1 (amr1)
       [1, 3, 3],
@@ -291,11 +301,12 @@ class ModelsTest(absltest.TestCase):
     concepts = torch.tensor(concepts)
     concepts = concepts.transpose(0,1)
     concepts_lengths = torch.tensor([3, 2])
-    head_selection = HeadsSelection(concept_vocab_size, hidden_size)
+    head_selection = HeadsSelection(concept_vocab_size, cfg.HEAD_SELECTION)
     head_selection.train()
-    scores, predictions = head_selection(concepts, concepts_lengths, adj_mat)
+    scores, predictions, mask = head_selection(concepts, concepts_lengths, adj_mat)
     self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
     self.assertEqual(predictions.shape, (batch_size, seq_len, seq_len))
+    self.assertEqual(mask.shape, (batch_size, seq_len, seq_len))
 
   def test_create_padding_mask(self):
     max_seq_len = 5
@@ -365,6 +376,54 @@ class ModelsTest(absltest.TestCase):
     expected_mask = torch.tensor(expected_mask)
     mask = HeadsSelection.create_mask(seq_len, concept_lengths, False)
     self.assertTrue(torch.equal(mask, expected_mask))
+
+  def test_sampling_mask(self):
+    sampling_ratio = 2
+    mat = [
+      [
+        [0, 0, 4, 0, 0, 0],
+        [0, 0, 0, 3, 0, 0],
+        [0, 8, 0, 2, 0, 0],
+        [0, 0, 0, 0, 6, 0],
+        [0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0]
+      ],
+      [
+        [0, 0, 0, 9, 0, 0],
+        [0, 3, 0, 0, 0, 0],
+        [0, 0, 2, 0, 0, 0],
+        [0, 4, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0]
+      ]
+    ]
+    mat = torch.Tensor(mat)
+
+    mask = [
+      [
+        [False, True, True, True, True, False],
+        [False, True, True, True, True, False],
+        [False, True, True, True, True, False],
+        [False, True, True, True, True, False],
+        [False, True, True, True, True, False],
+        [False, False, False, False, False, False]
+      ],
+      [
+        [False, True, True, True, False, False],
+        [False, True, True, True, False, False],
+        [False, True, True, True, False, False],
+        [False, True, True, True, False, False],
+        [False, False, False, False, False, False],
+        [False, False, False, False, False, False]
+      ]
+    ]
+    mask = torch.Tensor(mask)
+
+    final_mask = HeadsSelection.create_sampling_mask(mat, mask, sampling_ratio)
+    entries_before_sampling = int(torch.count_nonzero(mask))
+    entries_after_sampling = int(torch.count_nonzero(final_mask))
+    self.assertTrue(entries_before_sampling > entries_after_sampling)
+
 
 if __name__ == '__main__':
   absltest.main()

@@ -1,0 +1,4 @@
+# This file serves as an example of a config that overwrites the default.
+CONCEPT_IDENTIFICATION:
+  LSTM_BASED:
+    EMB_DIM: 3

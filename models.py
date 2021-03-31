@@ -2,27 +2,21 @@ from typing import Tuple
 import random
 import torch
 import torch.nn as nn
+from yacs.config import CfgNode
 
-EMB_DIM = 50
-HIDDEN_SIZE = 40
-NUM_LAYERS = 1
-
-DENSE_MLP_HIDDEN_SIZE = 30
 SAMPLING_RATIO = 2
-
-EDGE_THRESHOLD = 0.5
-
 #TODO: move this.
 BOS_IDX = 1
 
 class Encoder(nn.Module):
 
-  def __init__(self, input_vocab_size, hidden_size, use_bilstm=False):
-    super(Encoder, self).__init__()
-    self.embedding = nn.Embedding(input_vocab_size, EMB_DIM)
-    self.lstm = nn.LSTM(
-      EMB_DIM, hidden_size, NUM_LAYERS, bidirectional=use_bilstm)
 
+  def __init__(self, input_vocab_size, config: CfgNode, use_bilstm=False):
+    super(Encoder, self).__init__()
+    self.embedding = nn.Embedding(input_vocab_size, config.EMB_DIM)
+    self.lstm = nn.LSTM(
+      config.EMB_DIM, config.HIDDEN_SIZE, config.NUM_LAYERS,
+      bidirectional=use_bilstm)
 
   def forward(self, inputs: torch.Tensor, input_lengths: torch.Tensor):
     """
@@ -99,11 +93,12 @@ class AdditiveAttention(nn.Module):
 
 class DecoderClassifier(nn.Module):
 
-  def __init__(self, output_vocab_size:int, hidden_size: int):
+  def __init__(self, output_vocab_size:int, config: CfgNode):
     super(DecoderClassifier, self).__init__()
     # Classifier input is a concatenation of previous embedding - EMB_DIM,
     # decoder state - HIDDEN_SIZE and context vector - HIDDEN_SIZE.
-    self.linear_layer = nn.Linear(EMB_DIM + 2*hidden_size, output_vocab_size)
+    self.linear_layer = nn.Linear(
+      config.EMB_DIM + 2 * config.HIDDEN_SIZE, output_vocab_size)
 
   def forward(self, classifier_input):
     logits = self.linear_layer(classifier_input)
@@ -118,15 +113,16 @@ class DecoderStep(nn.Module):
   decoding strategy.
   """
 
-  def __init__(self, output_vocab_size: int, hidden_size: int):
+  def __init__(self, output_vocab_size: int, config: CfgNode):
     super(DecoderStep, self).__init__()
     # Lstm input has size EMB_DIM + HIDDEN_SIZE (will take as input the
     # previous embedding - EMB_DIM and the context vector - HIDDEN_SIZE).
-    self.lstm_cell = nn.LSTMCell(EMB_DIM + hidden_size, hidden_size)
-    self.additive_attention = AdditiveAttention(hidden_size)
-    self.output_embedding = nn.Embedding(output_vocab_size, EMB_DIM)
+    self.lstm_cell = nn.LSTMCell(
+      config.EMB_DIM + config.HIDDEN_SIZE, config.HIDDEN_SIZE)
+    self.additive_attention = AdditiveAttention(config.HIDDEN_SIZE)
+    self.output_embedding = nn.Embedding(output_vocab_size, config.EMB_DIM)
     # Classifier input: previous embedding, decoder state, context vector.
-    self.classifier = DecoderClassifier(output_vocab_size, hidden_size)
+    self.classifier = DecoderClassifier(output_vocab_size, config)
 
   def forward(self,
               input: torch.Tensor,
@@ -168,20 +164,22 @@ class DecoderStep(nn.Module):
 class Decoder(nn.Module):
 
   def __init__(self,
-               output_vocab_size: int,
-               hidden_size: int,
-               teacher_forcing_ratio: float = 0.5,
-               device: str = "cpu"):
+                output_vocab_size: int,
+                config: CfgNode,
+                teacher_forcing_ratio: float = 0.5,
+                device: str = "cpu"):
     super(Decoder, self).__init__()
     self.device = device
     self.output_vocab_size = output_vocab_size
     self.teacher_forcing_ratio = teacher_forcing_ratio
-    self.decoder_step = DecoderStep(output_vocab_size, hidden_size)
-    self.initial_state_layer_h = nn.Linear(hidden_size, hidden_size)
-    self.initial_state_layer_c = nn.Linear(hidden_size, hidden_size)
+    self.decoder_step = DecoderStep(output_vocab_size, config)
+    self.initial_state_layer_h = nn.Linear(
+      config.HIDDEN_SIZE, config.HIDDEN_SIZE)
+    self.initial_state_layer_c = nn.Linear(
+      config.HIDDEN_SIZE, config.HIDDEN_SIZE)
 
   def compute_initial_decoder_state(self,
-    last_encoder_states: Tuple[torch.Tensor, torch.Tensor]):
+                                    last_encoder_states: Tuple[torch.Tensor, torch.Tensor]):
     """Create the initial decoder state by passing the last encoder state though
     a linear layer. Since it's an LSTM, we'll be passing both the c and h vectors.
 
@@ -258,11 +256,13 @@ class Seq2seq(nn.Module):
   def __init__(self,
                input_vocab_size: int,
                output_vocab_size: int,
-               hidden_size:int = HIDDEN_SIZE,
+               # config CONCEPT_IDENTIFICATION.LSTM_BASED
+               config: CfgNode, 
                device="cpu"):
     super(Seq2seq, self).__init__()
-    self.encoder = Encoder(input_vocab_size, hidden_size)
-    self.decoder = Decoder(output_vocab_size, hidden_size, device=device)
+    hidden_size = config.HIDDEN_SIZE
+    self.encoder = Encoder(input_vocab_size, config)
+    self.decoder = Decoder(output_vocab_size, config, device=device)
     self.device = device
 
   def create_mask(self, input_lengths: torch.Tensor, mask_seq_len: int):
@@ -303,11 +303,12 @@ class DenseMLP(nn.Module):
   """
 
   def __init__(self,
-               node_repr_size:int):
+               node_repr_size:int,
+               config: CfgNode):
     super(DenseMLP, self).__init__()
-    self.Ua = nn.Linear(node_repr_size, DENSE_MLP_HIDDEN_SIZE, bias=False)
-    self.Wa = nn.Linear(node_repr_size, DENSE_MLP_HIDDEN_SIZE, bias=False)
-    self.va = nn.Linear(DENSE_MLP_HIDDEN_SIZE, 1, bias=False)
+    self.Ua = nn.Linear(node_repr_size, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
+    self.Wa = nn.Linear(node_repr_size, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
+    self.va = nn.Linear(config.DENSE_MLP_HIDDEN_SIZE, 1, bias=False)
 
 
   def forward(self, parent: torch.Tensor, child: torch.Tensor):
@@ -324,9 +325,9 @@ class DenseMLP(nn.Module):
 
 class EdgeScoring(nn.Module):
 
-  def __init__(self, hidden_size: int):
+  def __init__(self, config: CfgNode):
     super(EdgeScoring, self).__init__()
-    self.dense_mlp = DenseMLP(2 * hidden_size)
+    self.dense_mlp = DenseMLP(2 * config.HIDDEN_SIZE, config)
 
   def forward(self, concepts: torch.tensor):
     """
@@ -357,10 +358,13 @@ class HeadsSelection(nn.Module):
   edge scores.
   """
 
-  def __init__(self, concept_vocab_size, hidden_size: int):
+  def __init__(self, concept_vocab_size,
+               # config HEAD_SELECTION
+               config: CfgNode):
     super(HeadsSelection, self).__init__()
-    self.encoder = Encoder(concept_vocab_size, hidden_size, use_bilstm=True)
-    self.edge_scoring = EdgeScoring(hidden_size)
+    self.encoder = Encoder(concept_vocab_size, config, use_bilstm=True)
+    self.edge_scoring = EdgeScoring(config)
+    self.config = config
 
   @staticmethod
   def create_padding_mask(concepts_lengths: torch.tensor, seq_len: int):
@@ -491,5 +495,5 @@ class HeadsSelection(nn.Module):
     mask = self.create_mask(seq_len, concepts_lengths, self.training, gold_adj_mat)
     # TODO: would it make sense to instead weight the loss?
     # scores = scores.masked_fill(mask == 0, -float('inf'))
-    predictions = self.get_predictions(scores, EDGE_THRESHOLD)
+    predictions = self.get_predictions(scores, self.config.EDGE_THRESHOLD)
     return scores, predictions

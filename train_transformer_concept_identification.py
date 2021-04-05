@@ -2,6 +2,8 @@
    The transformer used is from PyTorch, with no custom encoder or decoder.
    Inputs to the transformer must be passed through embedding layer.
 """
+from absl import app
+from absl import flags
 from typing import Dict
 import os
 import time
@@ -21,6 +23,10 @@ from data_pipeline.dataset import PAD, EOS, UNK, PAD_IDX
 from data_pipeline.dataset import AMRDataset
 from model.transformer import TransformerSeq2Seq
 from train_concept_identification import compute_fScore
+from yacs.config import CfgNode
+from config import get_default_config
+
+FLAGS = flags.FLAGS
 
 BATCH_SIZE = 32
 DEV_BATCH_SIZE = 32
@@ -33,13 +39,11 @@ BOS_IDX = 1
 
 def compute_loss(criterion, logits, gold_outputs):
   """Computes cross entropy loss.
-
   Args:
     criterion: Cross entropy loss (with softmax).
     logits: network outputs not passed through activation layer (softmax),
       shape (output seq len, batch size, output no of classes).
     gold_outputs: Gold outputs, shape (output seq len, batch size).
-
   Returns:
     Loss.
   """
@@ -61,10 +65,8 @@ def eval_step(model: nn.Module,
       criterion (nn.Module): Criterion for loss computation.
       max_out_len (int): Maximum size of the sequence.
       batch (Dict[str, torch.tensor])): sentences and concepts tensors
-
   Returns:
       float: the total loss for the evaluation
-
   Observation:
       We use logits for loss computation
   """
@@ -89,7 +91,6 @@ def evaluate_model(model: nn.Module,
       criterion (nn.Module): Criterion for loss computation.
       max_out_len (int): Maximum size of the sequence.
       data_loader (DataLoader): Loads data to the model
-
   Returns:
       float: the total loss for the evaluation
   Observation:
@@ -120,7 +121,6 @@ def train_step(model: nn.Module,
       criterion (nn.Module): Criterion for loss computation.
       optimizer (Optimizer): Optimizer to be used.
       batch (Dict[str, torch.Tensor])): Data dictionary.
-
   Returns:
       float: the total loss for the evaluation
   Observation:
@@ -228,9 +228,16 @@ if __name__ == "__main__":
   input_vocab_size = vocabs.token_vocab_size
   output_vocab_size = vocabs.concept_vocab_size
 
+  cfg = get_default_config()
+  # if FLAGS.config:
+  #   config_file_name = FLAGS.config
+  #   config_path = os.path.join('configs', config_file_name)
+  #   cfg.merge_from_file(config_path)
+  #   cfg.freeze()
+
   model = TransformerSeq2Seq(input_vocab_size,
                              output_vocab_size,
-                             embedding_dim=EMB_DIM,
+                             cfg.CONCEPT_IDENTIFICATION.TRANSF_BASED,
                              device=DEVICE)
   model = model.to(DEVICE)
   optimizer = optim.Adam(model.parameters())
@@ -254,3 +261,4 @@ if __name__ == "__main__":
 
   train_writer.close()
   eval_writer.close()
+  

@@ -8,13 +8,7 @@ from torch.nn import TransformerEncoder,\
                      TransformerEncoderLayer,\
                      TransformerDecoderLayer,\
                      TransformerDecoder
-
-EMB_DIM = 50
-HIDDEN_SIZE = 40
-NUM_LAYERS = 1
-
-DENSE_MLP_HIDDEN_SIZE = 30
-SAMPLING_RATIO = 2
+from yacs.config import CfgNode
 
 #TODO: move this.
 BOS_IDX = 1
@@ -27,12 +21,14 @@ class TransformerSeq2Seq(nn.Module):
   def __init__(self,
                input_vocab_size: int,
                output_vocab_size: int,
-               hidden_size: int = HIDDEN_SIZE,
-               embedding_dim: int = 30,
-               head_number: int = 2,
+               # config CONCEPT_IDENTIFICATION.LSTM_BASED
+               config: CfgNode, 
                dropout=0.5,
                device="cpu"):
     super(TransformerSeq2Seq, self).__init__()
+    hidden_size = config.HIDDEN_SIZE
+    embedding_dim = config.EMB_DIM
+    head_number = config.NUM_HEADS
     # Embed inputs
     self.enc_embedding = nn.Embedding(input_vocab_size, embedding_dim).to(device)
     self.dec_embedding = nn.Embedding(output_vocab_size, embedding_dim).to(device)

@@ -77,13 +77,6 @@ class TransformerSeq2Seq(nn.Module):
   def make_triangular_mask(self, inp):
     return  nn.Transformer().generate_square_subsequent_mask(inp.size(0)).to(self.device)
 
-  def nopeak_mask(self, size):
-    np_mask = np.triu(np.ones((1, size, size)),k=1).astype('uint8')
-    np_mask =  Variable(torch.from_numpy(np_mask) == 0)
-    # if opt.device == 0:
-    np_mask = np_mask.cuda()
-    return np_mask
-
   def forward(self,
               input_sequence : torch.Tensor,
               input_lengths: torch.Tensor = None,
@@ -105,7 +98,7 @@ class TransformerSeq2Seq(nn.Module):
       input_sequence = self.enc_embedding(input_sequence)
       input_sequence = self.pos_encoder(input_sequence)
       # Source and Target mask (upper triangular)
-      src_mask = make_triangular_mask(input_sequence)
+      src_mask = self.make_triangular_mask(input_sequence)
       # Padding masks
       attention_mask = self.create_mask(input_lengths, input_seq_len)
       src_pad_mask = self.make_len_mask(input_sequence)
@@ -115,7 +108,7 @@ class TransformerSeq2Seq(nn.Module):
         gold_output_sequence = self.dec_embedding(gold_output_sequence)
         gold_output_sequence = self.pos_decoder(gold_output_sequence) 
         # Make target masks
-        self.trg_mask = make_triangular_mask(gold_output_sequence)
+        self.trg_mask = self.make_triangular_mask(gold_output_sequence)
         trg_pad_mask = self.make_len_mask(gold_output_sequence)
         # print("tgt pad mask", trg_pad_mask) 
         # Transform

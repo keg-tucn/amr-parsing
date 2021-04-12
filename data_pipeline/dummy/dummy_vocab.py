@@ -9,6 +9,7 @@ from penman.models import noop
 import definitions
 from data_pipeline.data_reading import extract_triples, get_paths
 from data_pipeline.dummy.dummy_training_entry import DummyTrainingEntry
+from data_pipeline.vocab import get_cache_paths, read_cached_vocabs, cache_vocabs
 
 VOCAB_PATH = 'temp/vocabs'
 TOKENS_CACHE_FILE = 'letter_tokens.pickle'
@@ -27,41 +28,6 @@ def build_vocab(letters: List[str], special_letters:List[str], min_frequency: in
   vocab = {word: i for i, word in enumerate(vocab_words)}
   print("vocab", vocab)
   return vocab
-  
-def get_cache_paths():
-  cache_dir = os.path.join(definitions.PROJECT_ROOT_DIR, VOCAB_PATH)
-  cache_files = [TOKENS_CACHE_FILE, CONCEPTS_CACHE_FILE, RELATIONS_CACHE_FILE]
-  cache_paths = [os.path.join(cache_dir, f) for f in cache_files]
-  return cache_paths
-
-def read_cached_vocabs():
-  """
-  Returns:
-    The 3 cached vocabs (tokens, concepts, relations) or None if nothing cached.
-  """
-  cache_paths = get_cache_paths()
-  vocabs = []
-  for cache_path in cache_paths:
-    if os.path.isfile(cache_path):
-      with open(cache_path, 'rb') as vocab_file:
-        vocab = pickle.load(vocab_file)
-        vocabs.append(vocab)
-    else:
-      return None
-  return vocabs[0], vocabs[1], vocabs[2]
-
-def cache_vocabs(token_vocab: Dict[str, int],
-                 concept_vocab: Dict[str, int],
-                 relation_vocab: Dict[str, int]):
-  cache_dir = os.path.join(definitions.PROJECT_ROOT_DIR, VOCAB_PATH)
-  if not os.path.exists(cache_dir):
-    os.makedirs(cache_dir)
-    return None
-  cache_paths = get_cache_paths()
-  vocabs = [token_vocab, concept_vocab, relation_vocab]
-  for i in range(len(cache_paths)):
-    with open(cache_paths[i], 'wb') as vocab_file:
-      pickle.dump(vocabs[i], vocab_file)
 
 def build_vocabs(
                  sentences: List[str],

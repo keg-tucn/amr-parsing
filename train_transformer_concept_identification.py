@@ -8,6 +8,7 @@ from typing import Dict
 import os
 import time
 import torch
+import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 # import torch_xla
@@ -19,174 +20,29 @@ from torch.utils.tensorboard import SummaryWriter
 
 from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
+from data_pipeline.dummy.dummy_vocab import DummyVocabs
+
 from data_pipeline.dataset import PAD, EOS, UNK, PAD_IDX
 from data_pipeline.dataset import AMRDataset
+from data_pipeline.dummy.dummy_dataset import DummySeq2SeqDataset
 from model.transformer import TransformerSeq2Seq
-from train_concept_identification import compute_fScore
+from train_concept_identification import train_model, train_step, evaluate_model, eval_step, compute_fScore, compute_loss
 from yacs.config import CfgNode
 from config import get_default_config
+from torch.autograd import Variable
+
+import string
+import random
 
 FLAGS = flags.FLAGS
 
 BATCH_SIZE = 32
 DEV_BATCH_SIZE = 32
 NO_EPOCHS = 5
-EMB_DIM = 16
-HEAD_NUMBER = 4
-NUM_LAYERS = 3
+
 
 BOS_IDX = 1
-
-def compute_loss(criterion, logits, gold_outputs):
-  """Computes cross entropy loss.
-  Args:
-    criterion: Cross entropy loss (with softmax).
-    logits: network outputs not passed through activation layer (softmax),
-      shape (output seq len, batch size, output no of classes).
-    gold_outputs: Gold outputs, shape (output seq len, batch size).
-  Returns:
-    Loss.
-  """
-  # Flatten predictions to have only two dimensions,
-  # batch size * seq len and no of classes.
-  flattened_logits = logits.flatten(start_dim=0, end_dim=1)
-  # Flatten gold outputs to have length batch size * seq len.
-  flattened_gold_outputs = gold_outputs.flatten()
-  loss = criterion(flattened_logits, flattened_gold_outputs)
-  return loss
-
-def eval_step(model: nn.Module,
-              criterion: nn.Module,
-              max_out_len: int,
-              batch: Dict[str, torch.tensor]):
-  """Model Evaluation Step
-  Args:
-      model (nn.Module): Model to be trained.
-      criterion (nn.Module): Criterion for loss computation.
-      max_out_len (int): Maximum size of the sequence.
-      batch (Dict[str, torch.tensor])): sentences and concepts tensors
-  Returns:
-      float: the total loss for the evaluation
-  Observation:
-      We use logits for loss computation
-  """
-  inputs = batch['sentence']
-  gold_outputs = batch['concepts']
-
-  logits, predictions = model(inputs, gold_outputs, max_out_length=max_out_len)
-  # logits, predictions = model(inputs, gold_outputs)
-  f_score = compute_fScore(gold_outputs, predictions, vocabs)
-
-  # Send logits to loss
-  loss = compute_loss(criterion, logits, gold_outputs)
-  return f_score, loss
-
-def evaluate_model(model: nn.Module,
-                   criterion: nn.Module,
-                   max_out_len: int,
-                   data_loader: DataLoader):
-  """Model Evaluation
-  Args:
-      model (nn.Module): Model to be trained.
-      criterion (nn.Module): Criterion for loss computation.
-      max_out_len (int): Maximum size of the sequence.
-      data_loader (DataLoader): Loads data to the model
-  Returns:
-      float: the total loss for the evaluation
-  Observation:
-    We do not use logits for loss computation
-  """
-  model.eval()
-  with torch.no_grad():
-    epoch_f_score = 0
-    epoch_loss = 0
-    no_batches = 0
-    for batch in data_loader:
-      f_score_epoch, loss = eval_step(model, criterion, max_out_len, batch)
-      epoch_f_score += f_score_epoch
-      epoch_loss += loss
-      no_batches += 1
-    epoch_loss = epoch_loss / no_batches
-    epoch_f_score = epoch_f_score / no_batches
-    return epoch_f_score, epoch_loss
-
-
-def train_step(model: nn.Module,
-               criterion: nn.Module,
-               optimizer: Optimizer,
-               batch: Dict[str, torch.Tensor]):
-  """Model Training Step
-  Args:
-      model (nn.Module): Model to be trained.
-      criterion (nn.Module): Criterion for loss computation.
-      optimizer (Optimizer): Optimizer to be used.
-      batch (Dict[str, torch.Tensor])): Data dictionary.
-  Returns:
-      float: the total loss for the evaluation
-  Observation:
-    We do not use logits for loss computation.
-    We must embed inputs and gold_outputs before forwarding.
-  """
-  # Input and target for transformer must be on CPU (error)
-  inputs = batch['sentence']
-  gold_outputs = batch['concepts']
-
-  optimizer.zero_grad()
-
-  logits, _ = model(inputs, gold_outputs)
-
-  # Compute LOSS -> This seems to be the problem
-  loss = compute_loss(criterion, logits, gold_outputs)
-  loss.backward()
-  optimizer.step()
-  return loss
-
-def train_model(model: nn.Module,
-                criterion: nn.Module,
-                optimizer: Optimizer,
-                max_out_len: int,
-                train_data_loader: DataLoader,
-                dev_data_loader: DataLoader,
-                train_writer: SummaryWriter,
-                eval_writer: SummaryWriter):
-  """Model Training
-  Args:
-      model (nn.Module): Model to be trained.
-      criterion (nn.Module): Criterion for loss computation.
-      optimizer (Optimizer): Optimizer to be used
-      max_out_len (int): Maximum size of the sequence.
-      train_data_loader (DataLoader): Loads Train data to the model.
-      dev_data_loader (DataLoader): Loads Dev data to the model.
-      input_vocab_size (int): Input vocab size
-      output_vocab_size (int): Output vocab size.
-      train_writer (SummaryWriter): Writes train data to TensorBoard.
-      eval_writer (SummaryWriter): Writes eval data to TensorBoard.
-  """
-  model.train()
-  for epoch in range(NO_EPOCHS):
-    start_time = time.time()
-    epoch_loss = 0
-    no_batches = 0
-    for batch in train_data_loader:
-      batch_loss = train_step(model,
-                              criterion,
-                              optimizer,
-                              batch)
-      epoch_loss += batch_loss
-      no_batches += 1
-    epoch_loss = epoch_loss / no_batches
-    fscore, dev_loss = evaluate_model(model,
-                              criterion,
-                              max_out_len,
-                              dev_data_loader)
-    model.train()
-    end_time = time.time()
-    time_passed = end_time - start_time
-    print('Epoch {} (took {:.2f} seconds)'.format(epoch + 1, time_passed))
-    print('Train loss: {}, dev loss: {}, f-score: {}'.format(epoch_loss, dev_loss, fscore))
-    train_writer.add_scalar('loss', epoch_loss, epoch)
-    eval_writer.add_scalar('loss', dev_loss, epoch)
-    eval_writer.add_scalar('f-score', fscore, epoch)
+BOS = '<bos>'
 
 if __name__ == "__main__":
 
@@ -196,25 +52,45 @@ if __name__ == "__main__":
   print('Training on device', DEVICE)
   torch.cuda.empty_cache()
 
-  train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-             'mt09sdl', 'proxy', 'wb', 'xinhua']
-  dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+  train_subsets = ['bolt', 'cctv']
+  dev_subsets = ['bolt']
   train_paths = get_paths('training', train_subsets)
   dev_paths = get_paths('dev', dev_subsets)
 
-  special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
-  vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))
+  all_sentences = []
+  all_sentences_dev = []
+  for i in range(30):
+      # Generate random string
+      letters = string.ascii_lowercase
+      sentence = ''.join(random.choice(letters) for i in range(10))
+      all_sentences.append(sentence)
+  print("all training sentences", all_sentences)
+  for i in range(15):
+      # Generate random string
+      letters = string.ascii_lowercase
+      sentence = ''.join(random.choice(letters) for i in range(10))
+      all_sentences_dev.append(sentence)
+  print("all dev sentences", all_sentences_dev)
 
-  train_dataset = AMRDataset(train_paths,
+  special_words = ([PAD, BOS, EOS, UNK], [PAD, BOS, EOS, UNK], [PAD, BOS, EOS])
+  vocabs = DummyVocabs(all_sentences, UNK, special_words, min_frequencies=(1, 1, 1))
+
+  train_dataset = DummySeq2SeqDataset(
+                            #  train_paths,
+                             all_sentences,
                              vocabs,
                              DEVICE,
-                             seq2seq_setting=True,
-                             ordered=True)
-  dev_dataset = AMRDataset(dev_paths,
+                            #  seq2seq_setting=True,
+                            #  ordered=True
+                             )
+  dev_dataset = DummySeq2SeqDataset(
+                          # dev_paths,
+                           all_sentences_dev,
                            vocabs,
                            DEVICE,
-                           seq2seq_setting=True,
-                           ordered=True)
+                          #  seq2seq_setting=True,
+                          #  ordered=True
+                           )
 
   max_out_len = train_dataset.max_concepts_length
 
@@ -237,6 +113,7 @@ if __name__ == "__main__":
 
   model = TransformerSeq2Seq(input_vocab_size,
                              output_vocab_size,
+                             max_out_len,
                              cfg.CONCEPT_IDENTIFICATION.TRANSF_BASED,
                              device=DEVICE)
   model = model.to(DEVICE)
@@ -253,7 +130,9 @@ if __name__ == "__main__":
   train_model(model,
               criterion,
               optimizer,
+              NO_EPOCHS,
               max_out_len,
+              vocabs,
               train_data_loader,
               dev_data_loader,
               train_writer,

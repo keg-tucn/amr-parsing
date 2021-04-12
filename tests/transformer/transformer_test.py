@@ -57,5 +57,6 @@ class TransformerTest(absltest.TestCase):
     self.assertEqual(out.shape,
                      (output_seq_len, batch_size, EMB_DIM))
 
+
 if __name__ == '__main__':
   absltest.main()

@@ -13,6 +13,8 @@ from torch.optim import Optimizer
 from torch.utils.tensorboard import SummaryWriter
 from yacs.config import CfgNode
 
+from data_pipeline.dummy.dummy_dataset import DummySeq2SeqDataset, BOS
+from data_pipeline.dummy.dummy_vocab import DummyVocabs
 from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
 from data_pipeline.dataset import PAD, EOS, UNK, PAD_IDX
@@ -21,6 +23,13 @@ from config import get_default_config
 from models import Seq2seq
 from data_pipeline.glove_embeddings import GloVeEmbeddings
 from utils.extended_vocab_utils import construct_extended_vocabulary, numericalize_concepts
+from model.transformer import TransformerSeq2Seq
+
+import string
+import random
+
+SIZE = 64
+DEV_SIZE = 32
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('config',
@@ -46,6 +55,12 @@ flags.DEFINE_integer('no_epochs',
 flags.DEFINE_boolean('use_glove',
                      default=True,
                      help=('Flag which tells whether model should use GloVe Embeddings or not.'))
+flags.DEFINE_boolean('dummy',
+                    default=False,
+                    help=('Dataset selection - dummy or default.'))
+flags.DEFINE_boolean('transformer',
+                    default=False,
+                    help=('Model selection - transformer or LSTM.'))
 
 def compute_loss(criterion, logits, gold_outputs):
   """Computes cross entropy loss.
@@ -303,6 +318,26 @@ def train_model(model: nn.Module,
     eval_writer.add_scalar('loss', dev_loss, epoch)
     eval_writer.add_scalar('f-score', fscore, epoch)
     train_writer.add_scalar('f-score', batch_f_score_train, epoch)
+
+def generate_sentences():
+  all_sentences = []
+  all_sentences_dev = []
+  for i in range(SIZE):
+      # Generate random string
+      letters = string.ascii_lowercase
+      sentence = ''.join(random.choice(letters) for i in range(10))
+      all_sentences.append(sentence)
+  print("all training sentences", all_sentences)
+  for i in range(DEV_SIZE):
+      letters = string.ascii_lowercase
+      sentence = ''.join(random.choice(letters) for i in range(10))
+      all_sentences_dev.append(sentence)
+  print("all dev sentences", all_sentences_dev)
+
+  special_words = ([PAD, BOS, EOS, UNK], [PAD, BOS, EOS, UNK], [PAD, BOS, EOS])
+  vocabs = DummyVocabs(all_sentences, UNK, special_words, min_frequencies=(1, 1, 1))
+
+  return all_sentences, all_sentences_dev, vocabs
 
 def main(_):
   #TODO: move to new file.

@@ -16,8 +16,6 @@ class DummyTrainingEntry():
     self.sentence = [char for char in sentence]
     # Reverse string + split
     self.concepts = [char for char in sentence[::-1]]
-    print("training entry sentence", self.sentence)
-    print("training entry concepts", self.concepts)
     self.adjacency_mat = []
 
   def get_labels(self):

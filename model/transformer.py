@@ -40,7 +40,6 @@ class TransformerSeq2Seq(nn.Module):
   def __init__(self,
                input_vocab_size: int,
                output_vocab_size: int,
-               max_out_length: int,
                # config CONCEPT_IDENTIFICATION.LSTM_BASED
                config: CfgNode, 
                dropout=0.5,
@@ -103,54 +102,55 @@ class TransformerSeq2Seq(nn.Module):
       attention_mask = self.create_mask(input_lengths, input_seq_len)
       src_pad_mask = self.make_len_mask(input_sequence)
       # print("src pad mask", attention_mask)     
-      if self.training:
-        # Embed output sequence
-        gold_output_sequence = self.dec_embedding(gold_output_sequence)
-        gold_output_sequence = self.pos_decoder(gold_output_sequence) 
-        # Make target masks
-        self.trg_mask = self.make_triangular_mask(gold_output_sequence)
-        trg_pad_mask = self.make_len_mask(gold_output_sequence)
-        # print("tgt pad mask", trg_pad_mask) 
+      # if self.training:
+      #   # Embed output sequence
+      #   gold_output_sequence = self.dec_embedding(gold_output_sequence)
+      #   gold_output_sequence = self.pos_decoder(gold_output_sequence) 
+      #   # Make target masks
+      #   self.trg_mask = self.make_triangular_mask(gold_output_sequence)
+      #   trg_pad_mask = self.make_len_mask(gold_output_sequence)
+      #   # print("tgt pad mask", trg_pad_mask) 
+      #   # Transform
+      #   transformer_out = self.transformer(input_sequence,
+      #                                     gold_output_sequence,
+      #                                     src_mask=src_mask,
+      #                                     tgt_mask=self.trg_mask,
+      #                                     # src_key_padding_mask=attention_mask,
+      #                                     tgt_key_padding_mask=attention_mask
+      #                                     )
+      #   # Linear Layer
+      #   logits = self.dense(transformer_out)
+      #   activated_outputs = torch.softmax(logits, dim=-1)
+      #   predictions = torch.argmax(activated_outputs, dim=-1)
+      #   print("predictions", predictions)
+      # else:
+      if max_out_length is None:
+        max_out_length = gold_output_sequence.shape[0]
+      predictions = torch.zeros(max_out_length, input_sequence.shape[1]).type(torch.LongTensor).to(self.device)
+      # predictions[:,0]= BOS_IDX
+      # Maybe it should be to simulate all bos 
+      predictions[0,:]= BOS_IDX
+      self.trg_mask = self.make_triangular_mask(predictions)
+      trg_pad_mask = self.make_len_mask(predictions)
+      # print("tgt pad mask", trg_pad_mask) 
+      # Apply model max_out_len times; take arg max and push forward
+      for i in range(max_out_length):
+        # Embed Predictions
+        print("predictions at step ", i)
+        print(predictions)
+        predictions = self.dec_embedding(predictions)
+        predictions = self.pos_decoder(predictions)
         # Transform
-        transformer_out = self.transformer(input_sequence,
-                                          gold_output_sequence,
-                                          # src_mask=src_mask,
-                                          # tgt_mask=self.trg_mask,
-                                          # src_key_padding_mask=attention_mask,
-                                          # tgt_key_padding_mask=trg_pad_mask
-                                          )
-        # Linear Layer
+        transformer_out = self.transformer(input_sequence, predictions,
+                              # src_mask=src_mask,
+                              # tgt_mask=self.trg_mask,
+                              # src_key_padding_mask=attention_mask,
+                              # tgt_key_padding_mask=attention_mask
+                              )
+        # Final Dense Layer
         logits = self.dense(transformer_out)
         activated_outputs = torch.softmax(logits, dim=-1)
+        # Take arg max from softmax
         predictions = torch.argmax(activated_outputs, dim=-1)
-        print("predictions", predictions)
-      else:
-        # predictions = torch.clone(gold_output_sequence).type(torch.LongTensor).to(self.device)
-        predictions = torch.zeros(max_out_length, input_sequence.shape[1]).type(torch.LongTensor).to(self.device)
-        # predictions[:,0]= BOS_IDX
-        # Maybe it should be to simulate all bos 
-        predictions[0,:]= BOS_IDX
-        self.trg_mask = nn.Transformer().generate_square_subsequent_mask(len(predictions)).to(self.device)
-        trg_pad_mask = self.make_len_mask(predictions)
-        # print("tgt pad mask", trg_pad_mask) 
-        # Apply model max_out_len times; take arg max and push forward
-        for i in range(max_out_length):
-          # Embed Predictions
-          print("predictions at step ", i)
-          print(predictions)
-          predictions = self.dec_embedding(predictions)
-          predictions = self.pos_decoder(predictions)
-          # Transform
-          transformer_out = self.transformer(input_sequence, predictions,
-                                # src_mask=src_mask,
-                                # tgt_mask=self.trg_mask,
-                                # src_key_padding_mask=attention_mask,
-                                # tgt_key_padding_mask=trg_pad_mask
-                                )
-          # Final Dense Layer
-          logits = self.dense(transformer_out)
-          activated_outputs = torch.softmax(logits, dim=-1)
-          # Take arg max from softmax
-          predictions = torch.argmax(activated_outputs, dim=-1)
       return logits, predictions
   

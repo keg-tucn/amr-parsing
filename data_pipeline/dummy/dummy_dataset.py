@@ -5,6 +5,8 @@ from torch.utils.data import Dataset, DataLoader
 from torch.nn.functional import pad as torch_pad
 import penman
 from penman.models import noop
+from data_pipeline.dataset import PAD, EOS, UNK, BOS, BOS_IDX, PAD_IDX, numericalize
+from data_pipeline.vocab import build_vocab
 from data_pipeline.dummy.dummy_training_entry import DummyTrainingEntry
 from data_pipeline.data_reading import extract_triples, get_paths
 from data_pipeline.dummy.dummy_vocab import DummyVocabs
@@ -13,23 +15,6 @@ import string
 import random
 import collections
 
-PAD = '<pad>' 
-UNK = '<unk>'
-EOS = '<eos>'
-BOS = '<bos>'
-PAD_IDX = 0
-
-def build_vocab(letters: List[str], special_letters:List[str], min_frequency: int):
-  letters_counter = Counter(letters)
-  words_and_freq = sorted(
-    letters_counter.items(), key=lambda pair: pair[1], reverse=True)
-  # Filter out words with freq < min frequency.
-  filtered_words_and_freq = [
-    pair for pair in words_and_freq if pair[1] >= min_frequency]
-  filtered_words = [wf[0] for wf in filtered_words_and_freq]
-  vocab_words = special_words + filtered_words
-  vocab = {word: i for i, word in enumerate(vocab_words)}
-  return vocab
 
 def add_eos(training_entry: DummyTrainingEntry, eos_token: str):
   training_entry.sentence.append(eos_token)
@@ -38,30 +23,6 @@ def add_eos(training_entry: DummyTrainingEntry, eos_token: str):
 def add_bos(training_entry: DummyTrainingEntry, bos_token: str):
   training_entry.sentence.insert(0, bos_token)
   training_entry.concepts.insert(0, bos_token)
-
-def numericalize(training_entry: DummyTrainingEntry,
-                 vocabs: DummyVocabs):
-  """
-  Processes the train entry into lists of integeres that can be easily converted
-  into tensors. For the adjacency matrix 0 will be used in case the relation
-  does not exist (is None).
-  Args:
-    vocabs: Vocabs object with the 3 vocabs (tokens, concepts, relations).
-  Returns a tuple of:
-    sentece: List of token indices.
-    concepts: List of concept indices.
-    adj_mat: Adjacency matrix which contains arc labels indices in the vocab.
-  """
-  # Process sentence.
-  processed_sentence = [vocabs.get_token_idx(t) for t in training_entry.sentence]
-  # Process concepts.
-  processed_concepts = [vocabs.get_token_idx(c) for c in training_entry.concepts]
-  # Process adjacency matrix.
-  processed_adj_mat = []
-  for row in training_entry.adjacency_mat:
-    processed_row = [0 if r is None else vocabs.get_relation_idx(r) for r in row]
-    processed_adj_mat.append(processed_row)
-  return processed_sentence, processed_concepts, processed_adj_mat
 
 class DummySeq2SeqDataset(Dataset):
   """
@@ -83,8 +44,6 @@ class DummySeq2SeqDataset(Dataset):
                ordered: bool = True,
                max_sen_len: bool = None):
     super(DummySeq2SeqDataset, self).__init__()
-    alphabet_dictionary = dict.fromkeys(string.ascii_lowercase, 0)
-    self.alphabet_dictionary_ordered = collections.OrderedDict(alphabet_dictionary)
     self.device = device
     self.seq2seq_setting = seq2seq_setting
     self.sentences_list= []
@@ -94,24 +53,22 @@ class DummySeq2SeqDataset(Dataset):
     self.amr_strings_by_id = {}
     i = 0
     for sentence in sentences:
-      print("dd sentence", sentence)
+      print("dummy sentence: ", sentence)
       amr_penman_graph = []
       self.amr_strings_by_id[i] = []
       i = i + 1
       training_entry = DummyTrainingEntry(
         sentence=sentence,
-        # g=None,
         unalignment_tolerance=1)
       # Process the training entry (add EOS for sentence and concepts).
-      # if self.seq2seq_setting:
-      add_bos(training_entry, BOS)
-      add_eos(training_entry, EOS)
+      if self.seq2seq_setting:
+        add_bos(training_entry, BOS)
+        add_eos(training_entry, EOS)
       # Numericalize the training entry (str -> vocab ids).
       sentence, concepts, adj_mat = numericalize(training_entry, vocabs)
       print('sentence numericalized', sentence)
       print('concepts numericalized', concepts)
       # Convert to pytorch tensors.
-      #TODO: should I use pytorch or numpy tensors?
       sentence = torch.tensor(sentence, dtype=torch.long)
       concepts = torch.tensor(concepts, dtype=torch.long)
       adj_mat = torch.tensor(adj_mat, dtype=torch.long)
@@ -177,8 +134,6 @@ class DummySeq2SeqDataset(Dataset):
         # Since it's a square matrix, the padding is the same on both dimensions.
         pad_size = max_adj_mat_size - len(adj_mat[0])
         padded_adj_mats.append(torch_pad(adj_mat, (0, pad_size, 0, pad_size)))
-    #TODO: maybe by default do not put (seq_len, batch size) but have some
-    # processing method for doing so after loading the data.
     if self.seq2seq_setting:
       new_batch = {
         'sentence': torch.transpose(torch.stack(padded_sentences),0,1).to(self.device),

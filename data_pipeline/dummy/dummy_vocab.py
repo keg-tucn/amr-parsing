@@ -9,25 +9,12 @@ from penman.models import noop
 import definitions
 from data_pipeline.data_reading import extract_triples, get_paths
 from data_pipeline.dummy.dummy_training_entry import DummyTrainingEntry
-from data_pipeline.vocab import get_cache_paths, read_cached_vocabs, cache_vocabs
+from data_pipeline.vocab import get_cache_paths, read_cached_vocabs, cache_vocabs, build_vocab
 
 VOCAB_PATH = 'temp/vocabs'
 TOKENS_CACHE_FILE = 'letter_tokens.pickle'
 CONCEPTS_CACHE_FILE = 'letter_concepts.pickle'
 RELATIONS_CACHE_FILE = 'letter_relations.pickle'
-
-def build_vocab(letters: List[str], special_letters:List[str], min_frequency: int):
-  letters_counter = Counter(letters)
-  words_and_freq = sorted(
-    letters_counter.items(), key=lambda pair: pair[1], reverse=True)
-  # Filter out words with freq < min frequency.
-  filtered_words_and_freq = [
-    pair for pair in words_and_freq if pair[1] >= min_frequency]
-  filtered_words = [wf[0] for wf in filtered_words_and_freq]
-  vocab_words = special_letters + filtered_words
-  vocab = {word: i for i, word in enumerate(vocab_words)}
-  print("vocab", vocab)
-  return vocab
 
 def build_vocabs(
                  sentences: List[str],
@@ -49,9 +36,8 @@ def build_vocabs(
   all_concepts = []
   all_relations = []
   for sentence in sentences:
-    training_entry = DummyTrainingEntry(
-      sentence=sentence,
-      unalignment_tolerance=1)
+    training_entry = DummyTrainingEntry(sentence=sentence,
+                                        unalignment_tolerance=1)
     tokens, concepts, relations = training_entry.get_labels()
     all_tokens += tokens
     all_concepts += concepts
@@ -74,7 +60,7 @@ class DummyVocabs():
                min_frequencies: Tuple[int, int, int]):
     """
     Args:
-      paths: Amr data file paths.
+      sentences: Dummy sentences.
       unkown_special_word: Unknown special word.
       special_words: Tuple of special words (for sentence tokens, for concepts
         and for relations). Each list contains special words like PAD or UNK

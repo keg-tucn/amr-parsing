@@ -17,7 +17,9 @@ from data_pipeline.glove_embeddings import GloVeEmbeddings
 PAD = '<pad>'
 UNK = '<unk>'
 EOS = '<eos>'
+BOS = '<bos>'
 PAD_IDX = 0
+BOS_IDX = 1
 
 AMR_ID_KEY = 'amr_id'
 SENTENCE_KEY = 'sentence'

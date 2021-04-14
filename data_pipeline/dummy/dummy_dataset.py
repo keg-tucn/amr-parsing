@@ -29,8 +29,8 @@ class DummySeq2SeqDataset(Dataset):
   Dataset of sentence - amr entries, where the amrs are represented as a list
   of concepts and adjacency matrix.
   Arguments:
-    paths: data paths.
-    vocabs: the 3 vocabs (tokens, concepts, relations).
+    sentences: dummy random sentences.
+    vocabs: the 3 dummy vocabs (tokens, concepts, relations).
     device: cpu or cuda.
     seq2seq_setting: If true only the data for the seq2seq setting is returned
       (sequence of tokens with their lengths and concepts).

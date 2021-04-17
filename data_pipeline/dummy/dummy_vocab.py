@@ -1,10 +1,8 @@
-from typing import List, Tuple, Dict
-from collections import Counter
-import os
-import pickle
+"""
+   File for Dummy Vocabulary
+"""
 
-import penman
-from penman.models import noop
+from typing import List, Tuple
 
 import definitions
 from data_pipeline.data_reading import extract_triples, get_paths
@@ -16,15 +14,13 @@ TOKENS_CACHE_FILE = 'letter_tokens.pickle'
 CONCEPTS_CACHE_FILE = 'letter_concepts.pickle'
 RELATIONS_CACHE_FILE = 'letter_relations.pickle'
 
-def build_vocabs(
-                 sentences: List[str],
+def build_vocabs(sentences: List[str],
                  special_words: Tuple[List[str], List[str], List[str]],
                  min_frequencies: Tuple[int, int, int]):
   """
   Builds the 3 vocabularies. The vocabularies are cached and constructed again
   only if the caching doesn't exist.
   """
-  #TODO: control caching though param.
   vocabs = read_cached_vocabs()
   if vocabs is not None:
     return vocabs
@@ -52,7 +48,9 @@ def build_vocabs(
 
 
 class DummyVocabs():
-
+  """
+   Class for Dummy Vocabulary
+  """
   def __init__(self,
                sentences: List[str],
                unkown_special_word: str,
@@ -72,7 +70,7 @@ class DummyVocabs():
     """
     self.unkown_special_word = unkown_special_word
     token_vocab, concept_vocab, relation_vocab = build_vocabs(
-      sentences, special_words, min_frequencies)
+        sentences, special_words, min_frequencies)
     self.token_vocab = token_vocab
     self.concept_vocab = concept_vocab
     self.relation_vocab = relation_vocab
@@ -81,11 +79,17 @@ class DummyVocabs():
     self.relation_vocab_size = len(relation_vocab.keys())
 
   def get_token_idx(self, token: str):
+    """
+    Gives token index in vocabulary
+    """
     if token in self.token_vocab.keys():
       return self.token_vocab[token]
     return self.token_vocab[self.unkown_special_word]
 
   def get_concept_idx(self, concept: str):
+    """
+    Gives concept index in vocabulary
+    """
     if concept in self.concept_vocab.keys():
       return self.concept_vocab[concept]
     return self.concept_vocab[self.unkown_special_word]

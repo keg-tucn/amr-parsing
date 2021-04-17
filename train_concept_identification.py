@@ -1,6 +1,8 @@
 import os
 from typing import Dict
 import time
+import string
+import random
 
 from absl import app
 from absl import flags
@@ -25,11 +27,9 @@ from data_pipeline.glove_embeddings import GloVeEmbeddings
 from utils.extended_vocab_utils import construct_extended_vocabulary, numericalize_concepts
 from model.transformer import TransformerSeq2Seq
 
-import string
-import random
 
-SIZE = 64
-DEV_SIZE = 32
+SIZE = 640
+DEV_SIZE = 320
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('config',
@@ -56,11 +56,11 @@ flags.DEFINE_boolean('use_glove',
                      default=True,
                      help=('Flag which tells whether model should use GloVe Embeddings or not.'))
 flags.DEFINE_boolean('dummy',
-                    default=False,
-                    help=('Dataset selection - dummy or default.'))
+                     default=False,
+                     help=('Dataset selection - dummy or default.'))
 flags.DEFINE_boolean('transformer',
-                    default=False,
-                    help=('Model selection - transformer or LSTM.'))
+                     default=False,
+                     help=('Model selection - transformer or LSTM.'))
 
 def compute_loss(criterion, logits, gold_outputs):
   """Computes cross entropy loss.
@@ -319,25 +319,27 @@ def train_model(model: nn.Module,
     eval_writer.add_scalar('f-score', fscore, epoch)
     train_writer.add_scalar('f-score', batch_f_score_train, epoch)
 
+
 def generate_sentences():
   all_sentences = []
   all_sentences_dev = []
   for i in range(SIZE):
-      # Generate random string
-      letters = string.ascii_lowercase
-      sentence = ''.join(random.choice(letters) for i in range(10))
-      all_sentences.append(sentence)
+    # Generate random string
+    letters = string.ascii_lowercase
+    sentence = ''.join(random.choice(letters) for i in range(10))
+    all_sentences.append(sentence)
   print("all training sentences", all_sentences)
   for i in range(DEV_SIZE):
-      letters = string.ascii_lowercase
-      sentence = ''.join(random.choice(letters) for i in range(10))
-      all_sentences_dev.append(sentence)
+    letters = string.ascii_lowercase
+    sentence = ''.join(random.choice(letters) for i in range(10))
+    all_sentences_dev.append(sentence)
   print("all dev sentences", all_sentences_dev)
 
   special_words = ([PAD, BOS, EOS, UNK], [PAD, BOS, EOS, UNK], [PAD, BOS, EOS])
   vocabs = DummyVocabs(all_sentences, UNK, special_words, min_frequencies=(1, 1, 1))
 
   return all_sentences, all_sentences_dev, vocabs
+
 
 def main(_):
   #TODO: move to new file.
@@ -351,6 +353,37 @@ def main(_):
     config_path = os.path.join('configs', config_file_name)
     cfg.merge_from_file(config_path)
     cfg.freeze()
+  if not FLAGS.dummy:
+    if FLAGS.train_subsets is None:
+      train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
+                       'mt09sdl', 'proxy', 'wb', 'xinhua']
+    else:
+      # Take subsets from flag passed.
+      train_subsets = FLAGS.train_subsets.split(',')
+    if FLAGS.dev_subsets is None:
+      dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+    else:
+      # Take subsets from flag passed.
+      dev_subsets = FLAGS.dev_subsets.split(',')
+
+    train_paths = get_paths('training', train_subsets)
+    dev_paths = get_paths('dev', dev_subsets)
+
+    special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
+    vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))
+    train_dataset = AMRDataset(
+      train_paths, vocabs, device, seq2seq_setting=True, ordered=True)
+    dev_dataset = AMRDataset(
+      dev_paths, vocabs, device, seq2seq_setting=True, ordered=True)
+  else:
+    all_sentences, all_sentences_dev, vocabs = generate_sentences()
+
+    train_dataset = DummySeq2SeqDataset(all_sentences,
+                                        vocabs,
+                                        device)
+    dev_dataset = DummySeq2SeqDataset(all_sentences_dev,
+                                      vocabs,
+                                      device)
 
   concept_identification_config = cfg.CONCEPT_IDENTIFICATION.LSTM_BASED
 
@@ -390,23 +423,38 @@ def main(_):
   max_out_len = train_dataset.max_concepts_length
 
   train_data_loader = DataLoader(
-    train_dataset, batch_size=FLAGS.batch_size,
-    collate_fn=train_dataset.collate_fn)
+      train_dataset, batch_size=FLAGS.batch_size,
+      collate_fn=train_dataset.collate_fn)
   dev_data_loader = DataLoader(
-    dev_dataset, batch_size=FLAGS.dev_batch_size,
-    collate_fn=dev_dataset.collate_fn)
+      dev_dataset, batch_size=FLAGS.dev_batch_size,
+      collate_fn=dev_dataset.collate_fn)
 
-  model = Seq2seq(
-    input_vocab_size,
-    output_vocab_size,
-    concept_identification_config,
-    glove_embeddings.embeddings_vocab if FLAGS.use_glove else None,
-    device=device).to(device)
+ 
+  if FLAGS.config:
+    config_file_name = FLAGS.config
+    config_path = os.path.join('configs', config_file_name)
+    cfg.merge_from_file(config_path)
+    cfg.freeze()
+
+  if FLAGS.transformer:
+    model = TransformerSeq2Seq(vocabs.token_vocab_size,
+                               vocabs.concept_vocab_size,
+                               cfg.CONCEPT_IDENTIFICATION.TRANSF_BASED,
+                               device=device).to(device)
+    tensorboard_dir = 'temp/concept_identification_transf'
+  else:
+    model = Seq2seq(
+      input_vocab_size,
+      output_vocab_size,
+      concept_identification_config,
+      glove_embeddings.embeddings_vocab if FLAGS.use_glove else None,
+      device=device).to(device)
+    tensorboard_dir = 'temp/concept_identification'
+
   optimizer = optim.Adam(model.parameters())
   criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
 
   # Use --logdir temp/heads_selection for tensorboard dev upload
-  tensorboard_dir = 'temp/concept_identification'
   if not os.path.exists(tensorboard_dir):
       os.makedirs(tensorboard_dir)
   train_writer = SummaryWriter(tensorboard_dir + "/train")

@@ -3,24 +3,24 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 from torch.nn.functional import pad as torch_pad
-import penman
-from penman.models import noop
-from data_pipeline.dataset import PAD, EOS, UNK, BOS, BOS_IDX, PAD_IDX, numericalize
-from data_pipeline.vocab import build_vocab
+from data_pipeline.dataset import PAD, EOS, UNK, BOS, numericalize
 from data_pipeline.dummy.dummy_training_entry import DummyTrainingEntry
-from data_pipeline.data_reading import extract_triples, get_paths
+from data_pipeline.data_reading import get_paths
 from data_pipeline.dummy.dummy_vocab import DummyVocabs
 
-import string
-import random
-import collections
 
 
 def add_eos(training_entry: DummyTrainingEntry, eos_token: str):
+  """
+    Add EOS token to DummyTrainingEntry
+  """
   training_entry.sentence.append(eos_token)
   training_entry.concepts.append(eos_token)
 
 def add_bos(training_entry: DummyTrainingEntry, bos_token: str):
+  """
+    Add BOS token to DummyTrainingEntry
+  """
   training_entry.sentence.insert(0, bos_token)
   training_entry.concepts.insert(0, bos_token)
 
@@ -37,16 +37,16 @@ class DummySeq2SeqDataset(Dataset):
     ordered: if True the entries are ordered (decreasingly) by sentence length.
   """
 
-  def __init__(self, sentences: List[str], 
+  def __init__(self, sentences: List[str],
                vocabs: DummyVocabs,
-               device: str, 
+               device: str,
                seq2seq_setting: bool = True,
                ordered: bool = True,
                max_sen_len: bool = None):
     super(DummySeq2SeqDataset, self).__init__()
     self.device = device
     self.seq2seq_setting = seq2seq_setting
-    self.sentences_list= []
+    self.sentences_list = []
     self.concepts_list = []
     self.adj_mat_list = []
     self.ids = []
@@ -58,8 +58,8 @@ class DummySeq2SeqDataset(Dataset):
       self.amr_strings_by_id[i] = []
       i = i + 1
       training_entry = DummyTrainingEntry(
-        sentence=sentence,
-        unalignment_tolerance=1)
+          sentence=sentence,
+          unalignment_tolerance=1)
       # Process the training entry (add EOS for sentence and concepts).
       if self.seq2seq_setting:
         add_bos(training_entry, BOS)
@@ -87,11 +87,11 @@ class DummySeq2SeqDataset(Dataset):
     if max_sen_len is not None:
       lengths = [len(s) for s in self.sentences_list]
       self.sentences_list = [
-        self.sentences_list[i] for i in range(len(lengths)) if lengths[i] <= max_sen_len]
+          self.sentences_list[i] for i in range(len(lengths)) if lengths[i] <= max_sen_len]
       self.concepts_list = [
-        self.concepts_list[i] for i in range(len(lengths)) if lengths[i] <= max_sen_len]
+          self.concepts_list[i] for i in range(len(lengths)) if lengths[i] <= max_sen_len]
       self.adj_mat_list = [
-        self.adj_mat_list[i] for i in range(len(lengths)) if lengths[i] <= max_sen_len]
+          self.adj_mat_list[i] for i in range(len(lengths)) if lengths[i] <= max_sen_len]
     # Get max no of concepts.
     concept_lengths = [len(c) for c in self.concepts_list]
     self.max_concepts_length = max(concept_lengths)
@@ -123,10 +123,10 @@ class DummySeq2SeqDataset(Dataset):
       max_adj_mat_size = max([len(s) for s in batch_adj_mats])
     # Pad sentences.
     padded_sentences = [
-      torch_pad(s, (0, max_sen_len - len(s))) for s in batch_sentences]
+        torch_pad(s, (0, max_sen_len - len(s))) for s in batch_sentences]
     # Pad concepts
     padded_concepts = [
-      torch_pad(c, (0, max_concepts_len - len(c))) for c in batch_concepts]
+        torch_pad(c, (0, max_concepts_len - len(c))) for c in batch_concepts]
     # Pad adj matrices (pad on both dimensions).
     padded_adj_mats = []
     for adj_mat in batch_adj_mats:
@@ -136,42 +136,36 @@ class DummySeq2SeqDataset(Dataset):
         padded_adj_mats.append(torch_pad(adj_mat, (0, pad_size, 0, pad_size)))
     if self.seq2seq_setting:
       new_batch = {
-        'sentence': torch.transpose(torch.stack(padded_sentences),0,1).to(self.device),
-        # This is left on the cpu for 'pack_padded_sequence'.
-        'sentence_lengts': torch.tensor(sentence_lengths),
-        'concepts': torch.transpose(torch.stack(padded_concepts),0,1).to(self.device)
+          'sentence': torch.transpose(torch.stack(padded_sentences), 0,1).to(self.device),
+          # This is left on the cpu for 'pack_padded_sequence'.
+          'sentence_lengts': torch.tensor(sentence_lengths),
+          'concepts': torch.transpose(torch.stack(padded_concepts), 0,1).to(self.device)
       }
     else:
       new_batch = {
-        'amr_id': amr_id,
-        'concepts': torch.transpose(torch.stack(padded_concepts),0,1).to(self.device),
-        # This is left on the cpu for 'pack_padded_sequence'.
-        'concepts_lengths': torch.tensor(concepts_lengths),
-        'adj_mat': torch.stack(padded_adj_mats).to(self.device)
+          'amr_id': amr_id,
+          'concepts': torch.transpose(torch.stack(padded_concepts), 0,1).to(self.device),
+          # This is left on the cpu for 'pack_padded_sequence'.
+          'concepts_lengths': torch.tensor(concepts_lengths),
+          'adj_mat': torch.stack(padded_adj_mats).to(self.device)
       }
     return new_batch
 
-#TODO: remove this and add tests.
 if __name__ == "__main__":
   subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
              'mt09sdl', 'proxy', 'wb', 'xinhua']
   paths = get_paths('training', subsets)
 
-  #TODO: a special token like 'no-relation' instead of None.
   special_words = ([PAD, UNK], [PAD, UNK], [PAD, UNK, None])
   vocabs = DummyVocabs(UNK, special_words, min_frequencies=(1, 1, 1))
 
   dataset = DummySeq2SeqDataset(paths, vocabs)
-  
-  #TODO: see if thr bactching could somehow be done by size (one option
-  # would be to order the elements in the dataset, have fixed batches and
-  # somehow shuffle the batches instead of the elements themselves).
   dataloader = DataLoader(dataset, batch_size=3, collate_fn=dataset.collate_fn)
 
   i = 0
   for batch in dataloader:
     if i == 2:
       break
-    i+=1
-    print('Batch ',i)
+    i += 1
+    print('Batch ', i)
     print(batch['sentence'].shape)

@@ -32,11 +32,6 @@ for handler in logger.handlers.copy():
 logger.addHandler(logging.NullHandler())
 logger.propagate = False
 
-BATCH_SIZE = 32
-DEV_BATCH_SIZE = 32
-NO_EPOCHS = 20
-HIDDEN_SIZE = 40
-
 UNK_REL_LABEL = ':unk-label'
 
 #TODO: repace with constants from data_pipeline.
@@ -136,11 +131,14 @@ def replace_all_edge_labels(amr_str: str, new_edge_label: str):
 def eval_step(model: nn.Module,
               optimizer: nn.Module,
               vocabs: Vocabs,
+              device: str,
               batch: torch.tensor):
   amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str = get_gold_data(batch)
 
   optimizer.zero_grad()
-  logits, predictions = model(inputs, inputs_lengths)
+  inputs_device = inputs.to(device)
+  gold_adj_mat_device = gold_adj_mat.to(device)
+  logits, predictions = model(inputs_device, inputs_lengths)
   seq_len = inputs.shape[0]
   mask = HeadsSelection.create_mask(seq_len, inputs_lengths, False)
 
@@ -149,7 +147,7 @@ def eval_step(model: nn.Module,
   predictions_strings = get_unlabelled_amr_strings_from_tensors(
     inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
 
-  loss = compute_loss(vocabs, mask, logits, gold_adj_mat)
+  loss = compute_loss(vocabs, mask, logits, gold_adj_mat_device)
   smatch_score = compute_smatch(gold_outputs, predictions_strings)
   amr_comparison_text = '  \n'.join([gold_amr_str[0], predictions_strings[0]])
 
@@ -158,6 +156,7 @@ def eval_step(model: nn.Module,
 def evaluate_model(model: nn.Module,
                    optimizer: nn.Module,
                    vocabs: Vocabs,
+                   device: str,
                    data_loader: DataLoader):
   model.eval()
   with torch.no_grad():
@@ -172,7 +171,7 @@ def evaluate_model(model: nn.Module,
 
     for batch in data_loader:
       loss, smatch_score, amr_comparison_text = eval_step(
-        model, optimizer, vocabs, batch)
+        model, optimizer, vocabs, device, batch)
       epoch_loss += loss
       epoch_smatch["precision"] += smatch_score["precision"]
       epoch_smatch["recall"] += smatch_score["recall"]
@@ -186,14 +185,18 @@ def evaluate_model(model: nn.Module,
 def train_step(model: nn.Module,
                optimizer: Optimizer,
                vocabs: Vocabs,
+               device: str,
                batch: Dict[str, torch.Tensor]):
   amr_ids, inputs, inputs_lengths, gold_adj_mat, _ = get_gold_data(batch)
 
   optimizer.zero_grad()
-  logits, predictions = model(inputs, inputs_lengths, gold_adj_mat)
+  # Move to trainig device (eg. cuda).
+  inputs_device = inputs.to(device)
+  gold_adj_mat_device = gold_adj_mat.to(device)
+  logits, predictions = model(inputs_device, inputs_lengths, gold_adj_mat_device)
   seq_len = inputs.shape[0]
-  mask = HeadsSelection.create_mask(seq_len, inputs_lengths, True, gold_adj_mat)
-  loss = compute_loss(vocabs, mask, logits, gold_adj_mat)
+  mask = HeadsSelection.create_mask(seq_len, inputs_lengths, True, gold_adj_mat_device)
+  loss = compute_loss(vocabs, mask, logits, gold_adj_mat_device)
   loss.backward()
   optimizer.step()
   return loss
@@ -214,6 +217,7 @@ def train_model(model: nn.Module,
                 optimizer: Optimizer,
                 no_epochs: int,
                 vocabs: Vocabs,
+                device: str,
                 train_writer: SummaryWriter,
                 eval_writer: SummaryWriter,
                 train_data_loader: DataLoader,
@@ -224,12 +228,12 @@ def train_model(model: nn.Module,
     epoch_loss = 0
     no_batches = 0
     for batch in train_data_loader:
-      batch_loss = train_step(model, optimizer, vocabs, batch)
+      batch_loss = train_step(model, optimizer, vocabs, device, batch)
       epoch_loss += batch_loss
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
     dev_loss, smatch, logged_text = evaluate_model(
-      model, optimizer, vocabs, dev_data_loader)
+      model, optimizer, vocabs, device, dev_data_loader)
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time
@@ -265,9 +269,9 @@ def main(_):
     dev_paths, vocabs, device, seq2seq_setting=False, ordered=True)
 
   train_data_loader = DataLoader(
-    train_dataset, batch_size=BATCH_SIZE, collate_fn=train_dataset.collate_fn)
+    train_dataset, batch_size=FLAGS.batch_size, collate_fn=train_dataset.collate_fn)
   dev_data_loader = DataLoader(
-    dev_dataset, batch_size=DEV_BATCH_SIZE, collate_fn=dev_dataset.collate_fn)
+    dev_dataset, batch_size=FLAGS.dev_batch_size, collate_fn=dev_dataset.collate_fn)
   
   print('Data loaded')
    
@@ -293,6 +297,7 @@ def main(_):
   eval_writer = SummaryWriter(tensorboard_dir+"/eval")
   train_model(model,
     optimizer, FLAGS.no_epochs, vocabs,
+    device,
     train_writer, eval_writer,
     train_data_loader, dev_data_loader)
   train_writer.close()

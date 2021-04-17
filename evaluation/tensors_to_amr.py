@@ -26,8 +26,9 @@ def tensors_to_lists(concepts: torch.tensor,
   # Remove padding.
   concepts_no_padding = concepts[0:concepts_length]
   adj_mat_no_padding = adj_mat[0:concepts_length, 0:concepts_length]
-  # Extract real root.
-  root_indexes = torch.nonzero(adj_mat_no_padding[0])
+  # Extract real root (1: to not take fake root).
+  root_indexes = torch.nonzero(adj_mat_no_padding[0, 1:])
+  root_indexes = root_indexes + 1 #shift them back because 1:
   root_idx = random.randrange(1, concepts_length)
   if(len(root_indexes.tolist()) == 1):
     root_idx = int(root_indexes[0])

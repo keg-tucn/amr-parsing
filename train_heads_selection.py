@@ -234,9 +234,6 @@ def train_model(model: nn.Module,
     epoch_loss = epoch_loss / no_batches
     dev_loss, smatch, logged_text = evaluate_model(
       model, optimizer, vocabs, device, dev_data_loader)
-    dev_loss = 0
-    smatch = {'best_f_score': 0, 'precision': 0, 'recall': 0}
-    logged_text = ''
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time

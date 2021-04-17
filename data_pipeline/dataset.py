@@ -195,10 +195,10 @@ class AMRDataset(Dataset):
     else:
       new_batch = {
         AMR_ID_KEY: amr_ids,
-        CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts),0,1).to(self.device),
+        CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts),0,1),
         # This is left on the cpu for 'pack_padded_sequence'.
         CONCEPTS_LEN_KEY: torch.tensor(concepts_lengths),
-        ADJ_MAT_KEY: torch.stack(padded_adj_mats).to(self.device),
+        ADJ_MAT_KEY: torch.stack(padded_adj_mats),
         AMR_STR_KEY: amr_strings
       }
     return new_batch

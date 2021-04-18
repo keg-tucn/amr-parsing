@@ -136,7 +136,7 @@ class TransformerSeq2Seq(nn.Module):
       logits = self.dense(transformer_out)
       activated_outputs = torch.softmax(logits, dim=-1)
       predictions = torch.argmax(activated_outputs, dim=-1)
-      print("predictions", predictions)
+      # print("predictions", predictions)
     else:
       predictions = torch.zeros(
           max_out_length, input_sequence.shape[1]).type(torch.LongTensor).to(self.device)

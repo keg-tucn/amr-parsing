@@ -4,10 +4,8 @@
 
 from typing import List, Tuple
 
-import definitions
-from data_pipeline.data_reading import extract_triples, get_paths
 from data_pipeline.dummy.dummy_training_entry import DummyTrainingEntry
-from data_pipeline.vocab import get_cache_paths, read_cached_vocabs, cache_vocabs, build_vocab
+from data_pipeline.vocab import read_cached_vocabs, cache_vocabs, build_vocab
 
 VOCAB_PATH = 'temp/vocabs'
 TOKENS_CACHE_FILE = 'letter_tokens.pickle'

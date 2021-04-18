@@ -1,11 +1,10 @@
 from typing import List
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 
 from torch.nn.functional import pad as torch_pad
-from data_pipeline.dataset import PAD, EOS, UNK, BOS, numericalize
+from data_pipeline.dataset import EOS, BOS, numericalize
 from data_pipeline.dummy.dummy_training_entry import DummyTrainingEntry
-from data_pipeline.data_reading import get_paths
 from data_pipeline.dummy.dummy_vocab import DummyVocabs
 
 
@@ -54,7 +53,6 @@ class DummySeq2SeqDataset(Dataset):
     i = 0
     for sentence in sentences:
       print("dummy sentence: ", sentence)
-      amr_penman_graph = []
       self.amr_strings_by_id[i] = []
       i = i + 1
       training_entry = DummyTrainingEntry(
@@ -150,22 +148,3 @@ class DummySeq2SeqDataset(Dataset):
           'adj_mat': torch.stack(padded_adj_mats).to(self.device)
       }
     return new_batch
-
-if __name__ == "__main__":
-  subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-             'mt09sdl', 'proxy', 'wb', 'xinhua']
-  paths = get_paths('training', subsets)
-
-  special_words = ([PAD, UNK], [PAD, UNK], [PAD, UNK, None])
-  vocabs = DummyVocabs(UNK, special_words, min_frequencies=(1, 1, 1))
-
-  dataset = DummySeq2SeqDataset(paths, vocabs)
-  dataloader = DataLoader(dataset, batch_size=3, collate_fn=dataset.collate_fn)
-
-  i = 0
-  for batch in dataloader:
-    if i == 2:
-      break
-    i += 1
-    print('Batch ', i)
-    print(batch['sentence'].shape)

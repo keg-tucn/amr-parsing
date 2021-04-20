@@ -2,6 +2,7 @@ import os
 from typing import Dict
 import time
 import string
+import pprint
 import random
 
 from absl import app
@@ -27,9 +28,9 @@ from data_pipeline.glove_embeddings import GloVeEmbeddings
 from utils.extended_vocab_utils import construct_extended_vocabulary, numericalize_concepts
 from model.transformer import TransformerSeq2Seq
 
-
-SIZE = 640
-DEV_SIZE = 320
+DUMMY_TRAIN_SIZE = 140
+DUMMY_DEV_SIZE = 40
+DUMMY_LEN = 10
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('config',
@@ -40,7 +41,7 @@ flags.DEFINE_string('train_subsets',
                     help=('Train subsets split by comma. Ex: bolt,proxy'))
 flags.DEFINE_string('dev_subsets',
                     default=None,
-                    help=('Train subsets split by comma. Ex: bolt,proxy'))
+                    help=('Dev subsets split by comma. Ex: bolt,proxy'))
 flags.DEFINE_integer('batch_size',
                      default=64,
                      short_name='b',
@@ -61,6 +62,9 @@ flags.DEFINE_boolean('dummy',
 flags.DEFINE_boolean('transformer',
                      default=False,
                      help=('Model selection - transformer or LSTM.'))
+flags.DEFINE_boolean('train_is_test',
+                     default=False,
+                     help=('Train and test on same dataset.'))
 
 def compute_loss(criterion, logits, gold_outputs):
   """Computes cross entropy loss.
@@ -136,13 +140,13 @@ def tensor_to_list(gold_outputs,
   # Extract padding from original outputs
   gold_list_no_padding = extract_padding(gold_outputs, eos_index)
   predicted_list_no_padding = extract_padding(predicted_outputs, eos_index)
-
+ 
   # Remove UNK from the sequence
   # TODO store the gold data before numericalization and use it here
   concepts_as_list_gold = indices_to_words(gold_list_no_padding, extended_vocab, config)
   concepts_as_list_predicted = indices_to_words(predicted_list_no_padding, extended_vocab, config)
 
-  return concepts_as_list_predicted, concepts_as_list_gold
+  return concepts_as_list_predicted, concepts_as_list_gold, gold_display, predicted_display
 
 
 def extract_padding(outputs, eos_index):
@@ -321,17 +325,22 @@ def train_model(model: nn.Module,
 
 
 def generate_sentences():
+  """
+    Generates random sentences of length DUMMY_LEN for dummy dataset.
+
+    Returns:
+      Train Sentences, Test Sentences, Dummy Vocabs
+  """
   all_sentences = []
   all_sentences_dev = []
-  for i in range(SIZE):
-    # Generate random string
+  for i in range(DUMMY_TRAIN_SIZE):
     letters = string.ascii_lowercase
-    sentence = ''.join(random.choice(letters) for i in range(10))
+    sentence = ''.join(random.choice(letters) for i in range(DUMMY_LEN))
     all_sentences.append(sentence)
   print("all training sentences", all_sentences)
-  for i in range(DEV_SIZE):
+  for i in range(DUMMY_DEV_SIZE):
     letters = string.ascii_lowercase
-    sentence = ''.join(random.choice(letters) for i in range(10))
+    sentence = ''.join(random.choice(letters) for i in range(DUMMY_LEN))
     all_sentences_dev.append(sentence)
   print("all dev sentences", all_sentences_dev)
 
@@ -372,9 +381,9 @@ def main(_):
     special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
     vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))
     train_dataset = AMRDataset(
-      train_paths, vocabs, device, seq2seq_setting=True, ordered=True)
+        train_paths, vocabs, device, seq2seq_setting=True, ordered=True)
     dev_dataset = AMRDataset(
-      dev_paths, vocabs, device, seq2seq_setting=True, ordered=True)
+        dev_paths, vocabs, device, seq2seq_setting=True, ordered=True)
   else:
     all_sentences, all_sentences_dev, vocabs = generate_sentences()
 

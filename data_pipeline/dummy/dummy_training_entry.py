@@ -3,8 +3,6 @@ import penman
 from data_pipeline.concepts import get_ordered_concepts_ids
 from data_pipeline.adjacency_mat import get_adjacency_mat
 
-ROOT_ID = -1
-ROOT = 'root'
 
 class DummyTrainingEntry():
   

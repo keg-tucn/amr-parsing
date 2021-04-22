@@ -5,23 +5,14 @@
 from typing import List, Tuple
 
 from data_pipeline.dummy.dummy_training_entry import DummyTrainingEntry
-from data_pipeline.vocab import read_cached_vocabs, cache_vocabs, build_vocab
-
-VOCAB_PATH = 'temp/vocabs'
-TOKENS_CACHE_FILE = 'letter_tokens.pickle'
-CONCEPTS_CACHE_FILE = 'letter_concepts.pickle'
-RELATIONS_CACHE_FILE = 'letter_relations.pickle'
+from data_pipeline.vocab import build_vocab
 
 def build_vocabs(sentences: List[str],
                  special_words: Tuple[List[str], List[str], List[str]],
                  min_frequencies: Tuple[int, int, int]):
   """
-  Builds the 3 vocabularies. The vocabularies are cached and constructed again
-  only if the caching doesn't exist.
+  Builds the 3 dummy vocabularies.
   """
-  vocabs = read_cached_vocabs()
-  if vocabs is not None:
-    return vocabs
   # Unpack tuples.
   special_tokens, special_concepts, special_relations = special_words
   min_freq_tokens, min_freq_concepts, min_freq_relations = min_frequencies
@@ -40,8 +31,6 @@ def build_vocabs(sentences: List[str],
   token_vocab = build_vocab(all_tokens, special_tokens, min_freq_tokens)
   concept_vocab = build_vocab(all_concepts, special_concepts, min_freq_concepts)
   relation_vocab = build_vocab(all_relations, special_relations, min_freq_relations)
-  # Cache the vocabs.
-  cache_vocabs(token_vocab, concept_vocab, relation_vocab)
   return token_vocab, concept_vocab, relation_vocab
 
 

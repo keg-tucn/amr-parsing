@@ -66,8 +66,6 @@ class TransformerSeq2Seq(nn.Module):
     self.dense = nn.Linear(embedding_dim, output_vocab_size).to(device)
     # Device to train on
     self.device = device
-    # Masks
-    self.trg_mask = None
 
 
   def make_triangular_mask(self, inp):
@@ -75,6 +73,21 @@ class TransformerSeq2Seq(nn.Module):
     Wrapper for transformer mask (upper triangular)
     """
     return  nn.Transformer().generate_square_subsequent_mask(inp.size(0)).to(self.device)
+
+  def apply_layer(self,
+                  input_sequence, output_sequence,
+                  src_mask=None,trg_mask=None):
+    output_sequence = self.dec_embedding(output_sequence)
+    output_sequence = self.pos_decoder(output_sequence)
+    trg_mask = self.make_triangular_mask(output_sequence)
+    transformer_out = self.transformer(input_sequence,
+                                      output_sequence,
+                                      src_mask=src_mask,
+                                      tgt_mask=trg_mask)
+    logits = self.dense(transformer_out)
+    activated_outputs = torch.softmax(logits, dim=-1)
+    predictions = torch.argmax(activated_outputs, dim=-1)
+    return logits, predictions
 
   def forward(self,
               input_sequence: torch.Tensor,
@@ -98,27 +111,14 @@ class TransformerSeq2Seq(nn.Module):
     input_sequence = self.enc_embedding(input_sequence)
     input_sequence = self.pos_encoder(input_sequence)
     if self.training:
-      gold_output_sequence = self.dec_embedding(gold_output_sequence)
-      gold_output_sequence = self.pos_decoder(gold_output_sequence)
-      self.trg_mask = self.make_triangular_mask(gold_output_sequence)
-      transformer_out = self.transformer(input_sequence,
-                                         gold_output_sequence,
-                                         tgt_mask=self.trg_mask)
-      logits = self.dense(transformer_out)
-      activated_outputs = torch.softmax(logits, dim=-1)
-      predictions = torch.argmax(activated_outputs, dim=-1)
+      trg_mask = self.make_triangular_mask(gold_output_sequence)
+      logits, predictions = self.apply_layer(input_sequence, gold_output_sequence, trg_mask=trg_mask)
     else:
       predictions = torch.zeros(
           max_out_length, input_sequence.shape[1]).type(torch.LongTensor).to(self.device)
       predictions[0, :] = BOS_IDX
-      self.trg_mask = self.make_triangular_mask(predictions)
-      # Apply model max_out_len times; take arg max and push forward
+      trg_mask = self.make_triangular_mask(predictions)
+      # Apply model max_out_len times
       for i in range(max_out_length):
-        predictions = self.dec_embedding(predictions)
-        predictions = self.pos_decoder(predictions)
-        transformer_out = self.transformer(input_sequence, predictions,
-                                           tgt_mask=self.trg_mask)
-        logits = self.dense(transformer_out)
-        activated_outputs = torch.softmax(logits, dim=-1)
-        predictions = torch.argmax(activated_outputs, dim=-1)
+        logits, predictions = self.apply_layer(input_sequence, predictions, trg_mask=trg_mask)
     return logits, predictions

@@ -22,10 +22,12 @@ from data_pipeline.dataset import AMR_ID_KEY, CONCEPTS_KEY, CONCEPTS_LEN_KEY,\
   GLOVE_CONCEPTS_KEY, ADJ_MAT_KEY, AMR_STR_KEY
 from data_pipeline.dataset import AMRDataset
 from data_pipeline.glove_embeddings import GloVeEmbeddings
-from arcs_masking import create_mask
+from utils.arcs_masking import create_mask
+from model.logged_data import LoggedData
+from utils.tensorboard_utils import save_scores_img_to_tensorboard
 
-from config import get_default_config
-from models import HeadsSelection
+from utils.config import get_default_config
+from model.models import HeadsSelection
 from evaluation.tensors_to_amr import get_unlabelled_amr_strings_from_tensors
 from smatch import score_amr_pairs
 
@@ -134,13 +136,16 @@ def eval_step(model: nn.Module,
               optimizer: nn.Module,
               vocabs: Vocabs,
               device: str,
-              batch: torch.tensor):
+              batch: torch.tensor,
+              logged_data: LoggedData):
   amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, glove_concepts = get_gold_data(batch)
 
   optimizer.zero_grad()
   inputs_device = inputs.to(device)
   gold_adj_mat_device = gold_adj_mat.to(device)
   logits, predictions = model(inputs_device, inputs_lengths)
+  if logged_data.scores is None:
+    logged_data.set_img_info(inputs, inputs, logits[0])
 
   # Remove the edge labels for the gold AMRs before doing the smatch.
   gold_outputs = [replace_all_edge_labels(a, UNK_REL_LABEL) for a in gold_amr_str]
@@ -157,7 +162,8 @@ def evaluate_model(model: nn.Module,
                    optimizer: nn.Module,
                    vocabs: Vocabs,
                    device: str,
-                   data_loader: DataLoader):
+                   data_loader: DataLoader,
+                   logged_data: LoggedData):
   model.eval()
   with torch.no_grad():
     epoch_loss = 0
@@ -171,7 +177,7 @@ def evaluate_model(model: nn.Module,
 
     for batch in data_loader:
       loss, smatch_score, amr_comparison_text = eval_step(
-        model, optimizer, vocabs, device, batch)
+        model, optimizer, vocabs, device, batch, logged_data)
       epoch_loss += loss
       epoch_smatch["precision"] += smatch_score["precision"]
       epoch_smatch["recall"] += smatch_score["recall"]
@@ -212,14 +218,14 @@ def write_results_on_tensorboard(train_writer: SummaryWriter, eval_writer: Summa
   eval_writer.add_scalar('smatch_precision', smatch["precision"], epoch)
   eval_writer.add_scalar('smatch_recall', smatch["recall"], epoch)
   eval_writer.add_text('amr', logged_text, epoch)
+  save_scores_img_to_tensorboard(eval_writer, )
 
 def train_model(model: nn.Module,
                 optimizer: Optimizer,
                 no_epochs: int,
                 vocabs: Vocabs,
                 device: str,
-                train_writer: SummaryWriter,
-                eval_writer: SummaryWriter,
+                logged_data: LoggedData,
                 train_data_loader: DataLoader,
                 dev_data_loader: DataLoader):
   model.train()
@@ -233,12 +239,15 @@ def train_model(model: nn.Module,
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
     dev_loss, smatch, logged_text = evaluate_model(
-      model, optimizer, vocabs, device, dev_data_loader)
+      model, optimizer, vocabs, device, dev_data_loader, logged_data)
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time
-    losses = {'train_loss': epoch_loss, 'dev_loss': dev_loss}
-    write_results_on_tensorboard(train_writer, eval_writer, epoch, losses, smatch, logged_text)
+    logged_data.set_epoch(epoch)
+    logged_data.set_losses(epoch_loss, dev_loss)
+    logged_data.set_smatch(smatch['best_f_score'], smatch['precision'], smatch['recall'])
+    logged_data.set_logged_text(logged_text)
+    logged_data.write_to_tensorboard()
     print('Epoch {} (took {:.2f} seconds)'.format(epoch+1, time_passed))
     print('Train loss: {}, dev loss: {}, smatch_f_score: {} '.format(epoch_loss, dev_loss, smatch["best_f_score"]))
 
@@ -291,7 +300,7 @@ def main(_):
   optimizer = optim.Adam(model.parameters())
 
   #Use --logdir temp/heads_selection for tensorboard dev upload
-  tensorboard_dir = 'temp/heads_selection'
+  tensorboard_dir = '../temp/heads_selection'
   if os.path.isdir(tensorboard_dir):
     # Delete any existing tensorboard logs.
     shutil.rmtree(tensorboard_dir)
@@ -299,10 +308,11 @@ def main(_):
   os.makedirs(tensorboard_dir)
   train_writer = SummaryWriter(tensorboard_dir+"/train")
   eval_writer = SummaryWriter(tensorboard_dir+"/eval")
+  logged_data = LoggedData(train_writer, eval_writer)
   train_model(model,
     optimizer, FLAGS.no_epochs, vocabs,
     device,
-    train_writer, eval_writer,
+    logged_data,
     train_data_loader, dev_data_loader)
   train_writer.close()
   eval_writer.close()

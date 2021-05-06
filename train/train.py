@@ -3,11 +3,10 @@ from typing import Dict
 import torch
 from torch.utils.data import DataLoader
 
-import data_pipeline.dataset
 from data_pipeline.dataset import AMRDataset
 from data_pipeline.data_reading import get_paths
 
-from models import Seq2seq
+from model.models import Seq2seq
 
 BATCH_SIZE = 16
 

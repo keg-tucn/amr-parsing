@@ -6,7 +6,7 @@ import pickle
 import penman
 from penman.models import noop
 
-import definitions
+from utils import definitions
 from data_pipeline.data_reading import extract_triples
 from data_pipeline.training_entry import TrainingEntry
 

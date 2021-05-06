@@ -16,8 +16,8 @@ from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
 from data_pipeline.dataset import PAD, EOS, UNK, PAD_IDX
 from data_pipeline.dataset import AMRDataset
-from config import get_default_config
-from models import Seq2seq
+from utils.config import get_default_config
+from model.models import Seq2seq
 from data_pipeline.glove_embeddings import GloVeEmbeddings
 
 FLAGS = flags.FLAGS
@@ -291,7 +291,7 @@ def main(_):
   criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
 
   # Use --logdir temp/heads_selection for tensorboard dev upload
-  tensorboard_dir = 'temp/concept_identification'
+  tensorboard_dir = '../temp/concept_identification'
   if not os.path.exists(tensorboard_dir):
       os.makedirs(tensorboard_dir)
   train_writer = SummaryWriter(tensorboard_dir + "/train")

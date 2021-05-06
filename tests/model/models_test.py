@@ -1,9 +1,9 @@
 from absl.testing import absltest
 import torch
 
-from models import Encoder, AdditiveAttention, DecoderStep, Decoder, Seq2seq
-from models import DenseMLP, EdgeScoring, HeadsSelection
-from config import get_default_config
+from model.models import Encoder, AdditiveAttention, DecoderStep, Decoder, Seq2seq
+from model.models import DenseMLP, EdgeScoring, HeadsSelection
+from utils.config import get_default_config
 
 class ModelsTest(absltest.TestCase):
 
@@ -260,10 +260,9 @@ class ModelsTest(absltest.TestCase):
     concepts_lengths = torch.tensor([3, 2])
     head_selection = HeadsSelection(concept_vocab_size, cfg.HEAD_SELECTION)
     head_selection.eval()
-    scores, predictions, mask = head_selection(concepts, concepts_lengths)
+    scores, predictions = head_selection(concepts, concepts_lengths)
     self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
     self.assertEqual(predictions.shape, (batch_size, seq_len, seq_len))
-    self.assertEqual(mask.shape, (batch_size, seq_len, seq_len))
 
   def test_edge_prediction(self):
     scores = [[[-0.0740, 0.0122, -0.0039],
@@ -297,132 +296,14 @@ class ModelsTest(absltest.TestCase):
       #batch ex 2 (amr2)
       [4, 5, 0]
     ]
-    adj_mat = torch.ones((batch_size, seq_len, seq_len))
     concepts = torch.tensor(concepts)
     concepts = concepts.transpose(0,1)
     concepts_lengths = torch.tensor([3, 2])
     head_selection = HeadsSelection(concept_vocab_size, cfg.HEAD_SELECTION)
     head_selection.train()
-    scores, predictions, mask = head_selection(concepts, concepts_lengths, adj_mat)
+    scores, predictions = head_selection(concepts, concepts_lengths)
     self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
     self.assertEqual(predictions.shape, (batch_size, seq_len, seq_len))
-    self.assertEqual(mask.shape, (batch_size, seq_len, seq_len))
-
-  def test_create_padding_mask(self):
-    max_seq_len = 5
-    concept_lengths = torch.tensor([2, 3])
-    expected_padding_mask = [
-      [
-        [True, True, False, False, False],
-        [True, True, False, False, False],
-        [False, False, False, False, False],
-        [False, False, False, False, False],
-        [False, False, False, False, False]
-      ],
-      [
-        [True, True, True, False, False],
-        [True, True, True, False, False],
-        [True, True, True, False, False],
-        [False, False, False, False, False],
-        [False, False, False, False, False]
-      ]
-    ]
-    expected_padding_mask = torch.tensor(expected_padding_mask)
-    padding_mask = HeadsSelection.create_padding_mask(concept_lengths, max_seq_len)
-    self.assertTrue(torch.equal(padding_mask, expected_padding_mask))
-
-  def test_create_fake_root_mask(self):
-    batch_size = 2
-    seq_len = 5
-    expected_fake_root_mask = [
-      [
-        [False, True, True, True, True],
-        [False, True, True, True, True],
-        [False, True, True, True, True],
-        [False, True, True, True, True],
-        [False, True, True, True, True]
-      ],
-      [
-        [False, True, True, True, True],
-        [False, True, True, True, True],
-        [False, True, True, True, True],
-        [False, True, True, True, True],
-        [False, True, True, True, True]
-      ]
-    ]
-    expected_fake_root_mask = torch.tensor(expected_fake_root_mask)
-    fake_root_mask = HeadsSelection.create_fake_root_mask(batch_size, seq_len)
-    self.assertTrue(torch.equal(fake_root_mask, expected_fake_root_mask))
-
-  def test_create_mask(self):
-    seq_len = 5
-    concept_lengths = torch.tensor([2, 3])
-    expected_mask = [
-      [
-        [False, True, False, False, False],
-        [False, True, False, False, False],
-        [False, False, False, False, False],
-        [False, False, False, False, False],
-        [False, False, False, False, False]
-      ],
-      [
-        [False, True, True, False, False],
-        [False, True, True, False, False],
-        [False, True, True, False, False],
-        [False, False, False, False, False],
-        [False, False, False, False, False]
-      ]
-    ]
-    expected_mask = torch.tensor(expected_mask)
-    mask = HeadsSelection.create_mask(seq_len, concept_lengths, False)
-    self.assertTrue(torch.equal(mask, expected_mask))
-
-  def test_sampling_mask(self):
-    sampling_ratio = 2
-    mat = [
-      [
-        [0, 0, 4, 0, 0, 0],
-        [0, 0, 0, 3, 0, 0],
-        [0, 8, 0, 2, 0, 0],
-        [0, 0, 0, 0, 6, 0],
-        [0, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 0]
-      ],
-      [
-        [0, 0, 0, 9, 0, 0],
-        [0, 3, 0, 0, 0, 0],
-        [0, 0, 2, 0, 0, 0],
-        [0, 4, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 0]
-      ]
-    ]
-    mat = torch.Tensor(mat)
-
-    mask = [
-      [
-        [False, True, True, True, True, False],
-        [False, True, True, True, True, False],
-        [False, True, True, True, True, False],
-        [False, True, True, True, True, False],
-        [False, True, True, True, True, False],
-        [False, False, False, False, False, False]
-      ],
-      [
-        [False, True, True, True, False, False],
-        [False, True, True, True, False, False],
-        [False, True, True, True, False, False],
-        [False, True, True, True, False, False],
-        [False, False, False, False, False, False],
-        [False, False, False, False, False, False]
-      ]
-    ]
-    mask = torch.Tensor(mask)
-
-    final_mask = HeadsSelection.create_sampling_mask(mat, mask, sampling_ratio)
-    entries_before_sampling = int(torch.count_nonzero(mask))
-    entries_after_sampling = int(torch.count_nonzero(final_mask))
-    self.assertTrue(entries_before_sampling > entries_after_sampling)
 
 
 if __name__ == '__main__':

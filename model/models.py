@@ -393,15 +393,11 @@ class HeadsSelection(nn.Module):
     prediction_mat = torch.where(sigmoid_mat >= threshold, 1, 0)
     return prediction_mat
 
-  def forward(self,
-              concepts: torch.tensor,
-              concepts_lengths: torch.tensor):
+  def forward(self, concepts: torch.tensor, concepts_lengths: torch.tensor):
     """
     Args:
       concepts (torch.tensor): Concepts (seq len, batch size).
       concepts_lengths (torch.tensor): Concept sequences lengths (batch size).
-      gold_adj_mat: Gold adj mat (matrix of relations), only sent on training
-        of shape (batch size, seq len, seq len).
 
     Returns:
       Edge scores (batch size, seq len, seq len).

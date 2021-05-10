@@ -24,7 +24,7 @@ from data_pipeline.dataset import AMR_ID_KEY, CONCEPTS_KEY, CONCEPTS_LEN_KEY,\
 from data_pipeline.dataset import AMRDataset
 from data_pipeline.glove_embeddings import GloVeEmbeddings
 from utils.arcs_masking import create_mask
-from model.logged_data import LoggedData
+from utils.data_logger import DataLogger
 
 from utils.config import get_default_config
 from model.models import HeadsSelection
@@ -77,7 +77,8 @@ def get_gold_data(batch: torch.tensor):
   return amr_ids, gold_concepts, gold_concepts_length, gold_adj_mat, gold_amr_str, glove_concepts, concepts_str
 
 def compute_loss(vocabs: Vocabs, concepts_lengths: torch.Tensor,
-                 logits: torch.Tensor, gold_outputs: torch.Tensor, config: CfgNode):
+                 logits: torch.Tensor, gold_outputs: torch.Tensor,
+                 config: CfgNode, mask=None):
   """
   Args:
     vocabs: Vocabs object (with the 3 vocabs).
@@ -93,7 +94,7 @@ def compute_loss(vocabs: Vocabs, concepts_lengths: torch.Tensor,
   pad_idx = vocabs.relation_vocab[PAD]
   binary_outputs = (gold_outputs != no_rel_index) * (gold_outputs != pad_idx)
   binary_outputs = binary_outputs.type(torch.FloatTensor)
-  mask = create_mask(gold_outputs, concepts_lengths, config)
+  mask = create_mask(gold_outputs, concepts_lengths, config) if mask is None else mask
   weights = mask.type(torch.FloatTensor)
   flattened_logits = logits.flatten()
   flattened_binary_outputs = binary_outputs.flatten()
@@ -133,12 +134,26 @@ def replace_all_edge_labels(amr_str: str, new_edge_label: str):
   new_amr_str = re.sub(r':[^\s]*', new_edge_label, amr_str)
   return new_amr_str
 
+def gather_logged_data(logger: DataLogger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str):
+  logged_index = logger.logged_example_index
+  if logger.text_scores is None:
+    sentence_len = inputs_lengths[logged_index].item()
+    scores = torch.sigmoid(logits)
+    scores = scores[logged_index][:sentence_len, :sentence_len]
+    color_scores = mask[logged_index][:sentence_len, :sentence_len].int()
+    gold_relations = gold_adj_mat[logged_index][:sentence_len, :sentence_len]
+    gold_relations[gold_relations != 0] = 1
+    logger.set_img_info(concepts_str[logged_index], concepts_str[logged_index],
+                             scores.cpu().detach().numpy(),
+                             color_scores.cpu().detach().numpy(),
+                             gold_relations.cpu().detach().numpy())
+
 def eval_step(model: nn.Module,
               optimizer: nn.Module,
               vocabs: Vocabs,
               device: str,
               batch: torch.tensor,
-              logged_data: LoggedData,
+              eval_logger: DataLogger,
               config: CfgNode):
   amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, \
   glove_concepts, concepts_str = get_gold_data(batch)
@@ -147,26 +162,18 @@ def eval_step(model: nn.Module,
   inputs_device = inputs.to(device)
   gold_adj_mat_device = gold_adj_mat.to(device)
   logits, predictions = model(inputs_device, inputs_lengths)
-  logged_index = logged_data.logged_example_index
-  if logged_data.scores is None:
-    sentence_len = inputs_lengths[logged_index].item()
-    scores = logits[logged_index][:sentence_len, :sentence_len]
-    preds = predictions[logged_index][:sentence_len, :sentence_len]
-    gold_relations = gold_adj_mat[logged_index][:sentence_len, :sentence_len]
-    gold_relations[gold_relations != 0] = 1
-    logged_data.set_img_info(concepts_str[logged_index], concepts_str[logged_index],
-                             scores.cpu().detach().numpy(),
-                             preds.cpu().detach().numpy(),
-                             gold_relations.cpu().detach().numpy())
+  mask = create_mask(gold_adj_mat_device, inputs_lengths, config)
+  gather_logged_data(eval_logger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str)
 
   # Remove the edge labels for the gold AMRs before doing the smatch.
   gold_outputs = [replace_all_edge_labels(a, UNK_REL_LABEL) for a in gold_amr_str]
   predictions_strings = get_unlabelled_amr_strings_from_tensors(
     inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
 
-  loss = compute_loss(vocabs, inputs_lengths, logits, gold_adj_mat_device, config)
+  loss = compute_loss(vocabs, inputs_lengths, logits, gold_adj_mat_device, config, mask)
   smatch_score = compute_smatch(gold_outputs, predictions_strings)
-  amr_comparison_text = '  \n'.join([gold_amr_str[logged_index], ' VERSUS', predictions_strings[logged_index]])
+  amr_comparison_text = '  \n'.join([gold_amr_str[eval_logger.logged_example_index], ' VERSUS',
+                                     predictions_strings[eval_logger.logged_example_index]])
 
   return loss, smatch_score, amr_comparison_text
 
@@ -175,7 +182,7 @@ def evaluate_model(model: nn.Module,
                    vocabs: Vocabs,
                    device: str,
                    data_loader: DataLoader,
-                   logged_data: LoggedData,
+                   eval_logger: DataLogger,
                    config: CfgNode):
   model.eval()
   with torch.no_grad():
@@ -190,7 +197,7 @@ def evaluate_model(model: nn.Module,
 
     for batch in data_loader:
       loss, smatch_score, amr_comparison_text = eval_step(
-        model, optimizer, vocabs, device, batch, logged_data, config)
+        model, optimizer, vocabs, device, batch, eval_logger, config)
       epoch_loss += loss
       epoch_smatch["precision"] += smatch_score["precision"]
       epoch_smatch["recall"] += smatch_score["recall"]
@@ -208,51 +215,81 @@ def train_step(model: nn.Module,
                vocabs: Vocabs,
                device: str,
                batch: Dict[str, torch.Tensor],
+               train_logger: DataLogger,
                config: CfgNode):
-  amr_ids, inputs, inputs_lengths, gold_adj_mat, _, _, _ = get_gold_data(batch)
+  amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, \
+  glove_concepts, concepts_str = get_gold_data(batch)
 
   optimizer.zero_grad()
   # Move to trainig device (eg. cuda).
   inputs_device = inputs.to(device)
   gold_adj_mat_device = gold_adj_mat.to(device)
   logits, predictions = model(inputs_device, inputs_lengths)
-  loss = compute_loss(vocabs, inputs_lengths, logits, gold_adj_mat_device, config)
+  mask = create_mask(gold_adj_mat_device, inputs_lengths, config)
+  gather_logged_data(train_logger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str)
+
+  loss = compute_loss(vocabs, inputs_lengths, logits, gold_adj_mat_device, config, mask)
   loss.backward()
   optimizer.step()
-  return loss
+
+  gold_outputs = [replace_all_edge_labels(a, UNK_REL_LABEL) for a in gold_amr_str]
+  predictions_strings = get_unlabelled_amr_strings_from_tensors(
+    inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
+
+  smatch_score = compute_smatch(gold_outputs, predictions_strings)
+  amr_comparison_text = '  \n'.join([gold_amr_str[train_logger.logged_example_index], ' VERSUS',
+                                     predictions_strings[train_logger.logged_example_index]])
+
+  return loss, smatch_score, amr_comparison_text
 
 def train_model(model: nn.Module,
                 optimizer: Optimizer,
                 no_epochs: int,
                 vocabs: Vocabs,
                 device: str,
-                logged_data: LoggedData,
+                train_logger: DataLogger,
+                eval_logger: DataLogger,
                 train_data_loader: DataLoader,
                 dev_data_loader: DataLoader,
                 config: CfgNode):
   model.train()
   for epoch in range(no_epochs):
+    train_logger.set_epoch(epoch)
+    eval_logger.set_epoch(epoch)
     start_time = time.time()
     epoch_loss = 0
     no_batches = 0
+    train_smatch = {
+      "precision": 0.0,
+      "recall": 0.0,
+      "best_f_score": 0.0
+    }
+    train_text = ''
     for batch in train_data_loader:
-      batch_loss = train_step(model, optimizer, vocabs, device, batch, config)
+      batch_loss, smatch_score, aux_text = train_step(
+        model, optimizer, vocabs, device, batch, train_logger, config)
+      train_smatch["precision"] += smatch_score["precision"]
+      train_smatch["recall"] += smatch_score["recall"]
+      train_smatch["best_f_score"] += smatch_score["best_f_score"]
+      train_text += 'Batch ' + str(no_batches) + ':\n' + aux_text + '\n----\n'
       epoch_loss += batch_loss
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
     dev_loss, smatch, logged_text = evaluate_model(
-      model, optimizer, vocabs, device, dev_data_loader, logged_data, config)
+      model, optimizer, vocabs, device, dev_data_loader, eval_logger, config)
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time
-    logged_data.set_epoch(epoch)
-    logged_data.set_losses(epoch_loss, dev_loss)
-    logged_data.set_smatch(smatch['best_f_score'], smatch['precision'], smatch['recall'])
-    logged_data.set_logged_text(logged_text)
-    logged_data.write_to_tensorboard()
-    logged_data.set_img_info([], [], None, None, None)
+    train_logger.set_loss(epoch_loss)
+    eval_logger.set_loss(dev_loss)
+    train_logger.set_smatch(train_smatch['best_f_score'], train_smatch['precision'], train_smatch['recall'])
+    eval_logger.set_smatch(smatch['best_f_score'], smatch['precision'], smatch['recall'])
+    train_logger.set_logged_text(train_text)
+    eval_logger.set_logged_text(logged_text)
+    train_logger.to_tensorboard()
+    eval_logger.to_tensorboard()
     print('Epoch {} (took {:.2f} seconds)'.format(epoch+1, time_passed))
-    print('Train loss: {}, dev loss: {}, smatch_f_score: {} '.format(epoch_loss, dev_loss, smatch["best_f_score"]))
+    print('Train loss: {}, dev loss: {}, smatch_f_score: {} '.format(epoch_loss, dev_loss, smatch['best_f_score']))
 
 def main(_):
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -311,15 +348,16 @@ def main(_):
   os.makedirs(tensorboard_dir)
   train_writer = SummaryWriter(tensorboard_dir+"/train")
   eval_writer = SummaryWriter(tensorboard_dir+"/eval")
-  logged_data = LoggedData(train_writer, eval_writer)
+  train_logger = DataLogger(train_writer, on_training_flow=True)
+  eval_logger = DataLogger(eval_writer)
   train_model(model,
     optimizer, FLAGS.no_epochs, vocabs,
     device,
-    logged_data,
+    train_logger, eval_logger,
     train_data_loader, dev_data_loader,
     cfg.HEAD_SELECTION)
-  train_writer.close()
   eval_writer.close()
+  train_writer.close()
 
 if __name__ == "__main__":
   app.run(main)

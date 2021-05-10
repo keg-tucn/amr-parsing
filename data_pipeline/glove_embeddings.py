@@ -2,7 +2,7 @@ import os
 import torch
 from typing import List, Dict
 
-from utils import definitions
+import definitions
 import numpy as np
 import bcolz
 import pickle

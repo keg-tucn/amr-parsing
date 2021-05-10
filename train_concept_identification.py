@@ -291,7 +291,7 @@ def main(_):
   criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
 
   # Use --logdir temp/heads_selection for tensorboard dev upload
-  tensorboard_dir = '../temp/concept_identification'
+  tensorboard_dir = 'temp/concept_identification'
   if not os.path.exists(tensorboard_dir):
       os.makedirs(tensorboard_dir)
   train_writer = SummaryWriter(tensorboard_dir + "/train")

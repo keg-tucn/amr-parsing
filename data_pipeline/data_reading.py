@@ -1,7 +1,7 @@
 from typing import List
 import re
 import os
-from utils import definitions
+import definitions
 
 """Pattern for extracting the id, tokens, alignments and amr from an entry string.
 An entry example follows:

@@ -19,12 +19,11 @@ from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
 from data_pipeline.dataset import PAD, EOS, UNK
 from data_pipeline.dataset import AMR_ID_KEY, CONCEPTS_KEY, CONCEPTS_LEN_KEY,\
-  GLOVE_CONCEPTS_KEY, ADJ_MAT_KEY, AMR_STR_KEY
+  GLOVE_CONCEPTS_KEY, ADJ_MAT_KEY, AMR_STR_KEY, CONCEPTS_STR_KEY
 from data_pipeline.dataset import AMRDataset
 from data_pipeline.glove_embeddings import GloVeEmbeddings
 from utils.arcs_masking import create_mask
 from model.logged_data import LoggedData
-from utils.tensorboard_utils import save_scores_img_to_tensorboard
 
 from utils.config import get_default_config
 from model.models import HeadsSelection
@@ -72,8 +71,9 @@ def get_gold_data(batch: torch.tensor):
   gold_adj_mat = batch[ADJ_MAT_KEY]
   gold_amr_str = batch[AMR_STR_KEY]
   glove_concepts = batch[GLOVE_CONCEPTS_KEY]
+  concepts_str = batch[CONCEPTS_STR_KEY]
 
-  return amr_ids, gold_concepts, gold_concepts_length, gold_adj_mat, gold_amr_str, glove_concepts
+  return amr_ids, gold_concepts, gold_concepts_length, gold_adj_mat, gold_amr_str, glove_concepts, concepts_str
 
 def compute_loss(vocabs: Vocabs, concepts_lengths: torch.Tensor,
                  logits: torch.Tensor, gold_outputs: torch.Tensor):
@@ -138,14 +138,24 @@ def eval_step(model: nn.Module,
               device: str,
               batch: torch.tensor,
               logged_data: LoggedData):
-  amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, glove_concepts = get_gold_data(batch)
+  amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, \
+  glove_concepts, concepts_str = get_gold_data(batch)
 
   optimizer.zero_grad()
   inputs_device = inputs.to(device)
   gold_adj_mat_device = gold_adj_mat.to(device)
   logits, predictions = model(inputs_device, inputs_lengths)
+  logged_index = logged_data.logged_example_index
   if logged_data.scores is None:
-    logged_data.set_img_info(inputs, inputs, logits[0])
+    sentence_len = inputs_lengths[logged_index].item()
+    scores = logits[logged_index][:sentence_len, :sentence_len]
+    preds = predictions[logged_index][:sentence_len, :sentence_len]
+    gold_relations = gold_adj_mat[logged_index][:sentence_len, :sentence_len]
+    gold_relations[gold_relations != 0] = 1
+    logged_data.set_img_info(concepts_str[logged_index], concepts_str[logged_index],
+                             scores.cpu().detach().numpy(),
+                             preds.cpu().detach().numpy(),
+                             gold_relations.cpu().detach().numpy())
 
   # Remove the edge labels for the gold AMRs before doing the smatch.
   gold_outputs = [replace_all_edge_labels(a, UNK_REL_LABEL) for a in gold_amr_str]
@@ -154,7 +164,7 @@ def eval_step(model: nn.Module,
 
   loss = compute_loss(vocabs, inputs_lengths, logits, gold_adj_mat_device)
   smatch_score = compute_smatch(gold_outputs, predictions_strings)
-  amr_comparison_text = '  \n'.join([gold_amr_str[0], ' VERSUS', predictions_strings[0]])
+  amr_comparison_text = '  \n'.join([gold_amr_str[logged_index], ' VERSUS', predictions_strings[logged_index]])
 
   return loss, smatch_score, amr_comparison_text
 
@@ -195,7 +205,7 @@ def train_step(model: nn.Module,
                vocabs: Vocabs,
                device: str,
                batch: Dict[str, torch.Tensor]):
-  amr_ids, inputs, inputs_lengths, gold_adj_mat, _, _ = get_gold_data(batch)
+  amr_ids, inputs, inputs_lengths, gold_adj_mat, _, _, _ = get_gold_data(batch)
 
   optimizer.zero_grad()
   # Move to trainig device (eg. cuda).
@@ -206,19 +216,6 @@ def train_step(model: nn.Module,
   loss.backward()
   optimizer.step()
   return loss
-
-def write_results_on_tensorboard(train_writer: SummaryWriter, eval_writer: SummaryWriter,
-                                 epoch, losses, smatch, logged_text):
-  epoch_loss = losses['train_loss']
-  dev_loss = losses['dev_loss']
-
-  train_writer.add_scalar('loss', epoch_loss, epoch)
-  eval_writer.add_scalar('loss', dev_loss, epoch)
-  eval_writer.add_scalar('smatch_f_score', smatch["best_f_score"], epoch)
-  eval_writer.add_scalar('smatch_precision', smatch["precision"], epoch)
-  eval_writer.add_scalar('smatch_recall', smatch["recall"], epoch)
-  eval_writer.add_text('amr', logged_text, epoch)
-  save_scores_img_to_tensorboard(eval_writer, )
 
 def train_model(model: nn.Module,
                 optimizer: Optimizer,
@@ -248,6 +245,7 @@ def train_model(model: nn.Module,
     logged_data.set_smatch(smatch['best_f_score'], smatch['precision'], smatch['recall'])
     logged_data.set_logged_text(logged_text)
     logged_data.write_to_tensorboard()
+    logged_data.set_img_info([], [], None, None, None)
     print('Epoch {} (took {:.2f} seconds)'.format(epoch+1, time_passed))
     print('Train loss: {}, dev loss: {}, smatch_f_score: {} '.format(epoch_loss, dev_loss, smatch["best_f_score"]))
 
@@ -286,7 +284,7 @@ def main(_):
     train_dataset, batch_size=FLAGS.batch_size, collate_fn=train_dataset.collate_fn)
   dev_data_loader = DataLoader(
     dev_dataset, batch_size=FLAGS.dev_batch_size, collate_fn=dev_dataset.collate_fn)
-  
+
   print('Data loaded')
 
   if FLAGS.config:
@@ -300,7 +298,7 @@ def main(_):
   optimizer = optim.Adam(model.parameters())
 
   #Use --logdir temp/heads_selection for tensorboard dev upload
-  tensorboard_dir = '../temp/heads_selection'
+  tensorboard_dir = 'temp/heads_selection'
   if os.path.isdir(tensorboard_dir):
     # Delete any existing tensorboard logs.
     shutil.rmtree(tensorboard_dir)

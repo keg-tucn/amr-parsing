@@ -16,8 +16,10 @@ class TensorboardUtilsTest(absltest.TestCase):
             [0.2, 0]
         ]
         scores = np.array(scores)
-        writer = SummaryWriter("./")
+        writer = SummaryWriter("./test_img")
         writer.add_text("AMR comparison", "The dog eats a bone", 0)
+        writer.add_scalar("loss", 1.0, 0)
+        writer.add_scalar("loss", 1.5, 1)
         save_scores_img_to_tensorboard(writer, "Test", 0, input_seq, output_seq, scores)
         writer.close()
         pass

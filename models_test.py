@@ -1,10 +1,10 @@
 from absl.testing import absltest
-import numpy as np
 import torch
 
+from config import get_default_config
 from models import Encoder, AdditiveAttention, DecoderStep, Decoder, Seq2seq
 from models import DenseMLP, EdgeScoring, HeadsSelection
-from models import EMB_DIM, HIDDEN_SIZE
+from yacs.config import CfgNode
 
 class ModelsTest(absltest.TestCase):
 
@@ -112,6 +112,12 @@ class ModelsTest(absltest.TestCase):
     batch_size = 3
     input_seq_len = 5
     hidden_size = 15
+    config: CfgNode
+    config = get_default_config();
+    opts = ["CONCEPT_IDENTIFICATION.LSTM_BASED.HIDDEN_SIZE", 15,
+            "CONCEPT_IDENTIFICATION.LSTM_BASED.EMB_DIM", 50]
+    config.merge_from_list(opts)
+
     mask = torch.tensor([
       [True, True, True, False, False],
       [True, True, True, True, True],
@@ -122,7 +128,7 @@ class ModelsTest(absltest.TestCase):
     previous_state_c = torch.zeros(batch_size, hidden_size)
     previous_state = (previous_state_h, previous_state_c)
     encoder_states = torch.zeros(input_seq_len, batch_size, hidden_size)
-    decoder_step = DecoderStep(output_vocab_size, hidden_size)
+    decoder_step = DecoderStep(output_vocab_size, config.CONCEPT_IDENTIFICATION.LSTM_BASED)
     decoder_state, predictions = decoder_step(
       decoder_input, previous_state, encoder_states, mask)
     self.assertEqual(decoder_state[0].shape, (batch_size, hidden_size))
@@ -136,6 +142,7 @@ class ModelsTest(absltest.TestCase):
     output_seq_len = 7
     num_layers = 1
     hidden_size = 15
+    config: CfgNode
     mask = torch.tensor([
       [True, True, True, False, False],
       [True, True, True, True, True],
@@ -147,7 +154,7 @@ class ModelsTest(absltest.TestCase):
       torch.zeros(num_layers, batch_size, hidden_size))
     encoder_output = (encoder_states, encoder_last_state)
     decoder_inputs = torch.full((output_seq_len, batch_size), 0)
-    decoder_model = Decoder(output_vocab_size, hidden_size)
+    decoder_model = Decoder(output_vocab_size, config)
     decoder_model.train()
     logits, predictions = decoder_model(encoder_output, mask, decoder_inputs)
     self.assertEqual(logits.shape,
@@ -186,10 +193,15 @@ class ModelsTest(absltest.TestCase):
     output_seq_len = 5
     input_vocab_size = 10
     output_vocab_size = 20
+    config: CfgNode
+    config = get_default_config();
+    opts = ["CONCEPT_IDENTIFICATION.LSTM_BASED.HIDDEN_SIZE", 15,
+            "CONCEPT_IDENTIFICATION.LSTM_BASED.EMB_DIM", 50]
+    config.merge_from_list(opts)
     inputs = torch.zeros((input_seq_len, batch_size)).type(torch.LongTensor)
     input_lengths = torch.tensor([2, 4, 1])
     gold_outputs = torch.zeros((output_seq_len, batch_size)).type(torch.LongTensor)
-    seq2seq_model = Seq2seq(input_vocab_size, output_vocab_size)
+    seq2seq_model = Seq2seq(input_vocab_size, output_vocab_size, config.CONCEPT_IDENTIFICATION.LSTM_BASED)
     seq2seq_model.train()
     logits, predictions = seq2seq_model(inputs, input_lengths, gold_outputs)
     self.assertEqual(logits.shape,

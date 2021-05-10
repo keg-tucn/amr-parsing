@@ -1,6 +1,7 @@
 from absl.testing import absltest
 import torch
 
+from utils.config import get_default_config
 from utils.arcs_masking import create_mask, create_sampling_mask, \
     create_fake_root_mask, create_padding_mask
 
@@ -139,8 +140,8 @@ class MaskingTest(absltest.TestCase):
             ]
         ]
         expected_mask = torch.tensor(expected_mask)
-        mask = create_mask(gold_adj_mat, concept_lengths)
-        print(mask)
+        cfg = get_default_config()
+        mask = create_mask(gold_adj_mat, concept_lengths, cfg.HEAD_SELECTION)
         self.assertTrue(torch.equal(mask, expected_mask))
 
 

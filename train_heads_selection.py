@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 from torch.nn.functional import binary_cross_entropy_with_logits
 from torch.optim import Optimizer
 from torch.utils.tensorboard import SummaryWriter
+from yacs.config import CfgNode
 
 from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
@@ -76,7 +77,7 @@ def get_gold_data(batch: torch.tensor):
   return amr_ids, gold_concepts, gold_concepts_length, gold_adj_mat, gold_amr_str, glove_concepts, concepts_str
 
 def compute_loss(vocabs: Vocabs, concepts_lengths: torch.Tensor,
-                 logits: torch.Tensor, gold_outputs: torch.Tensor):
+                 logits: torch.Tensor, gold_outputs: torch.Tensor, config: CfgNode):
   """
   Args:
     vocabs: Vocabs object (with the 3 vocabs).
@@ -92,7 +93,7 @@ def compute_loss(vocabs: Vocabs, concepts_lengths: torch.Tensor,
   pad_idx = vocabs.relation_vocab[PAD]
   binary_outputs = (gold_outputs != no_rel_index) * (gold_outputs != pad_idx)
   binary_outputs = binary_outputs.type(torch.FloatTensor)
-  mask = create_mask(gold_outputs, concepts_lengths)
+  mask = create_mask(gold_outputs, concepts_lengths, config)
   weights = mask.type(torch.FloatTensor)
   flattened_logits = logits.flatten()
   flattened_binary_outputs = binary_outputs.flatten()
@@ -137,7 +138,8 @@ def eval_step(model: nn.Module,
               vocabs: Vocabs,
               device: str,
               batch: torch.tensor,
-              logged_data: LoggedData):
+              logged_data: LoggedData,
+              config: CfgNode):
   amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, \
   glove_concepts, concepts_str = get_gold_data(batch)
 
@@ -162,7 +164,7 @@ def eval_step(model: nn.Module,
   predictions_strings = get_unlabelled_amr_strings_from_tensors(
     inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
 
-  loss = compute_loss(vocabs, inputs_lengths, logits, gold_adj_mat_device)
+  loss = compute_loss(vocabs, inputs_lengths, logits, gold_adj_mat_device, config)
   smatch_score = compute_smatch(gold_outputs, predictions_strings)
   amr_comparison_text = '  \n'.join([gold_amr_str[logged_index], ' VERSUS', predictions_strings[logged_index]])
 
@@ -173,7 +175,8 @@ def evaluate_model(model: nn.Module,
                    vocabs: Vocabs,
                    device: str,
                    data_loader: DataLoader,
-                   logged_data: LoggedData):
+                   logged_data: LoggedData,
+                   config: CfgNode):
   model.eval()
   with torch.no_grad():
     epoch_loss = 0
@@ -187,7 +190,7 @@ def evaluate_model(model: nn.Module,
 
     for batch in data_loader:
       loss, smatch_score, amr_comparison_text = eval_step(
-        model, optimizer, vocabs, device, batch, logged_data)
+        model, optimizer, vocabs, device, batch, logged_data, config)
       epoch_loss += loss
       epoch_smatch["precision"] += smatch_score["precision"]
       epoch_smatch["recall"] += smatch_score["recall"]
@@ -204,7 +207,8 @@ def train_step(model: nn.Module,
                optimizer: Optimizer,
                vocabs: Vocabs,
                device: str,
-               batch: Dict[str, torch.Tensor]):
+               batch: Dict[str, torch.Tensor],
+               config: CfgNode):
   amr_ids, inputs, inputs_lengths, gold_adj_mat, _, _, _ = get_gold_data(batch)
 
   optimizer.zero_grad()
@@ -212,7 +216,7 @@ def train_step(model: nn.Module,
   inputs_device = inputs.to(device)
   gold_adj_mat_device = gold_adj_mat.to(device)
   logits, predictions = model(inputs_device, inputs_lengths)
-  loss = compute_loss(vocabs, inputs_lengths, logits, gold_adj_mat_device)
+  loss = compute_loss(vocabs, inputs_lengths, logits, gold_adj_mat_device, config)
   loss.backward()
   optimizer.step()
   return loss
@@ -224,19 +228,20 @@ def train_model(model: nn.Module,
                 device: str,
                 logged_data: LoggedData,
                 train_data_loader: DataLoader,
-                dev_data_loader: DataLoader):
+                dev_data_loader: DataLoader,
+                config: CfgNode):
   model.train()
   for epoch in range(no_epochs):
     start_time = time.time()
     epoch_loss = 0
     no_batches = 0
     for batch in train_data_loader:
-      batch_loss = train_step(model, optimizer, vocabs, device, batch)
+      batch_loss = train_step(model, optimizer, vocabs, device, batch, config)
       epoch_loss += batch_loss
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
     dev_loss, smatch, logged_text = evaluate_model(
-      model, optimizer, vocabs, device, dev_data_loader, logged_data)
+      model, optimizer, vocabs, device, dev_data_loader, logged_data, config)
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time
@@ -311,7 +316,8 @@ def main(_):
     optimizer, FLAGS.no_epochs, vocabs,
     device,
     logged_data,
-    train_data_loader, dev_data_loader)
+    train_data_loader, dev_data_loader,
+    cfg.HEAD_SELECTION)
   train_writer.close()
   eval_writer.close()
 

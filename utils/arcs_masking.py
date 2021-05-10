@@ -1,6 +1,6 @@
 import torch
 
-SAMPLING_RATIO = 2
+from yacs.config import CfgNode
 
 
 def create_padding_mask(concepts_lengths: torch.tensor, seq_len: int):
@@ -27,10 +27,12 @@ def create_padding_mask(concepts_lengths: torch.tensor, seq_len: int):
 
 def create_sampling_mask(gold_adj_mat: torch.tensor,
                          partial_mask: torch.tensor,
-                         sampling_ratio: int = SAMPLING_RATIO):
+                         sampling_ratio: int = 0.5):
     """Create sampling mask (for balancing negative and positive classes).
     Args:
       gold_adj_mat: Gold adjacency matrix (batch size, seq len, seq len).
+      partial_mask: Mask obtained by masking fake root and padding, so that
+        the sampling process will not consider them again.
       sampling_ratio: How many negative edges should be sampled for a positive
         edge. We sample this at batch level.
     Returns:
@@ -71,7 +73,7 @@ def create_fake_root_mask(batch_size, seq_len, root_idx=0):
     return mask
 
 
-def create_mask(gold_adj_mat, concepts_lengths: torch.tensor):
+def create_mask(gold_adj_mat, concepts_lengths: torch.tensor, config: CfgNode):
     """
     Creates a mask for weighting the loss.
     This mask will be a mask of boolean values:
@@ -87,6 +89,7 @@ def create_mask(gold_adj_mat, concepts_lengths: torch.tensor):
       gold_adj_mat: Gold adj mat (matrix of relations), only sent on training
         of shape (batch size, seq len, seq len).
       concepts_lengths: Batch of concept sequence lengths (batch size).
+      config: configuration file
 
     Returns mask of shape (batch size, seq len, seq len).
     """
@@ -95,5 +98,5 @@ def create_mask(gold_adj_mat, concepts_lengths: torch.tensor):
     mask = create_padding_mask(concepts_lengths, seq_len)
     fake_root_mask = create_fake_root_mask(batch_size, seq_len)
     mask = mask * fake_root_mask
-    mask = create_sampling_mask(gold_adj_mat, mask)
+    mask = create_sampling_mask(gold_adj_mat, mask, config.SAMPLING_RATIO)
     return mask

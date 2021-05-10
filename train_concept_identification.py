@@ -67,7 +67,7 @@ def compute_loss(criterion, logits, gold_outputs):
 
 def compute_fScore(gold_outputs,
                    predicted_outputs,
-                   vocabs: Vocabs):
+                   extended_vocab):
     """Computes f_score, precision, recall.
 
   Args:
@@ -78,9 +78,9 @@ def compute_fScore(gold_outputs,
     f_score
   """
 
-    eos_index = list(vocabs.concept_vocab.keys()).index(EOS)
+    eos_index = list(extended_vocab.keys()).index(EOS)
     concepts_as_list_predicted, concepts_as_list_gold = tensor_to_list(gold_outputs, predicted_outputs, eos_index,
-                                                                       vocabs)
+                                                                       extended_vocab)
 
     print("concepts_as_list_gold", concepts_as_list_gold)
     print("concepts_as_list_predicted", concepts_as_list_predicted)
@@ -103,8 +103,6 @@ def compute_sequence_fscore(gold_sequence, predicted_sequence):
     false_positive = len(set(predicted_sequence).difference(set(gold_sequence)))
     false_negative = len(set(gold_sequence).difference(set(predicted_sequence)))
 
-    print(f'tp = {true_positive}, fn = {false_negative}, fp = {false_positive}')
-
     precision = true_positive / (true_positive + false_positive)
     recall = true_positive / (true_positive + false_negative)
     f_score = 0
@@ -116,15 +114,15 @@ def compute_sequence_fscore(gold_sequence, predicted_sequence):
 def tensor_to_list(gold_outputs,
                    predicted_outputs,
                    eos_index,
-                   vocabs: Vocabs):
+                   extended_vocab):
     # Extract padding from original outputs
     gold_list_no_padding = extract_padding(gold_outputs, eos_index)
     predicted_list_no_padding = extract_padding(predicted_outputs, eos_index)
 
     # Remove UNK from the sequence
     # TODO store the gold data before numericalization and use it here
-    concepts_as_list_gold = indices_to_words(gold_list_no_padding, vocabs)
-    concepts_as_list_predicted = indices_to_words(predicted_list_no_padding, vocabs)
+    concepts_as_list_gold = indices_to_words(gold_list_no_padding, extended_vocab)
+    concepts_as_list_predicted = indices_to_words(predicted_list_no_padding, extended_vocab)
 
     return concepts_as_list_predicted, concepts_as_list_gold
 
@@ -150,16 +148,16 @@ def extract_padding(outputs, eos_index):
 
 
 def indices_to_words(outputs_no_padding,
-                     vocabs: Vocabs):
+                     extended_vocab):
     # TODO put config and use concept_vocab if not pointer generator
-    ids_to_concepts_list = list(vocabs.shared_vocab.keys())
+    ids_to_concepts_list = list(extended_vocab.keys())
     concepts_as_list = []
     print("ids_to_concepts_list ", len(ids_to_concepts_list))
     print("outputs_no_padding ", len(outputs_no_padding))
     for sentence in outputs_no_padding:
         concepts = []
         for id in sentence:
-            if ids_to_concepts_list[int(id)] != '<unk>':
+            if ids_to_concepts_list[int(id)] != UNK:
                 concepts.append(ids_to_concepts_list[int(id)])
         concepts_as_list.append(concepts)
     return concepts_as_list
@@ -178,7 +176,6 @@ def eval_step(model: nn.Module,
 
     if config.USE_POINTER_GENERATION:
         unnumericalized_inputs = batch['initial_sentence']
-        print("unnumericalized_inputs ", unnumericalized_inputs)
         unnumericalized_concepts = batch['concepts_string']
         # compute extended vocab
         extended_vocab = deepcopy(vocabs.shared_vocab)
@@ -196,17 +193,20 @@ def eval_step(model: nn.Module,
         indices = [[extended_vocab[t] for t in sentence] for sentence in unnumericalized_inputs]
 
         # numericalized_output
-        gold_outputs = torch.transpose(torch.as_tensor([[extended_vocab[word] for word in sentence]
+        gold_outputs = torch.transpose(torch.as_tensor([[extended_vocab[word]
+                                                         if word in extended_vocab.keys()
+                                                         else extended_vocab[UNK] for word in sentence]
                                                         for sentence in unnumericalized_concepts]),0,1)
 
         logits, predictions = model(inputs, inputs_lengths,
                                 extended_vocab_size, torch.as_tensor(indices),
                                 max_out_length=max_out_len)
+        f_score = compute_fScore(gold_outputs, predictions, extended_vocab)
     else:
         logits, predictions = model(inputs, inputs_lengths,
                                     max_out_length=max_out_len)
 
-    f_score = compute_fScore(gold_outputs, predictions, vocabs)
+        f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab)
 
     gold_output_len = gold_outputs.shape[0]
     padded_gold_outputs = torch_pad(
@@ -261,10 +261,12 @@ def train_step(model: nn.Module,
     else:
         logits, predictions = model(inputs, inputs_lengths,
                                     gold_outputs)
+
+    f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab)
     loss = compute_loss(criterion, logits, gold_outputs)
     loss.backward()
     optimizer.step()
-    return loss
+    return loss, f_score
 
 
 def train_model(model: nn.Module,
@@ -284,21 +286,26 @@ def train_model(model: nn.Module,
         i = 0
         epoch_loss = 0
         no_batches = 0
+        batch_f_score_train = 0
         for batch in train_data_loader:
-            batch_loss = train_step(model, criterion, optimizer, batch, vocabs, config)
+            batch_loss, f_score_train = train_step(model, criterion, optimizer, batch, vocabs, config)
+            batch_f_score_train += f_score_train
             epoch_loss += batch_loss
             no_batches += 1
         epoch_loss = epoch_loss / no_batches
+        batch_f_score_train = batch_f_score_train / no_batches
         fscore, dev_loss = evaluate_model(
             model, criterion, max_out_len, vocabs, dev_data_loader, config)
         model.train()
         end_time = time.time()
         time_passed = end_time - start_time
         print('Epoch {} (took {:.2f} seconds)'.format(epoch + 1, time_passed))
-        print('Train loss: {}, dev loss: {}, f-score {}'.format(epoch_loss, dev_loss, fscore))
+        print('Train loss: {}, dev loss: {}, f_score_train: {}, f-score: {}'.format(epoch_loss, dev_loss,
+                                                                                    batch_f_score_train, fscore))
         train_writer.add_scalar('loss', epoch_loss, epoch)
         eval_writer.add_scalar('loss', dev_loss, epoch)
         eval_writer.add_scalar('f-score', fscore, epoch)
+        train_writer.add_scalar('f-score', batch_f_score_train, epoch)
 
 
 def main(_):

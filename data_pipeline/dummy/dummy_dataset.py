@@ -20,7 +20,7 @@ def add_bos(training_entry: DummyTrainingEntry, bos_token: str):
   """
     Add BOS token to DummyTrainingEntry
   """
-  training_entry.sentence.insert(0, bos_token)
+  # training_entry.sentence.insert(0, bos_token)
   training_entry.concepts.insert(0, bos_token)
 
 class DummySeq2SeqDataset(Dataset):

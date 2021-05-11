@@ -22,15 +22,16 @@ from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
 from data_pipeline.dataset import PAD, EOS, UNK, PAD_IDX
 from data_pipeline.dataset import AMRDataset
+from data_pipeline.training_entry import ROOT
 from config import get_default_config
 from models import Seq2seq
 from data_pipeline.glove_embeddings import GloVeEmbeddings
 from utils.extended_vocab_utils import construct_extended_vocabulary, numericalize_concepts
 from model.transformer import TransformerSeq2Seq
 
-DUMMY_TRAIN_SIZE = 140
-DUMMY_DEV_SIZE = 40
-DUMMY_LEN = 10
+DUMMY_TRAIN_SIZE = 14000
+DUMMY_DEV_SIZE = 4000
+DUMMY_LEN = 20
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('config',
@@ -48,6 +49,7 @@ flags.DEFINE_integer('batch_size',
                      help=('Batch size.'))
 flags.DEFINE_integer('dev_batch_size',
                      default=64,
+                     short_name='db',
                      help=('Dev batch size.'))
 flags.DEFINE_integer('no_epochs',
                      short_name='e',
@@ -193,10 +195,11 @@ def eval_step(model: nn.Module,
               max_out_len: int,
               vocabs: Vocabs,
               batch: Dict[str, torch.tensor],
-              config: CfgNode, device):
-  inputs = batch['sentence']
-  inputs_lengths = batch['sentence_lengts']
-  gold_outputs = batch['concepts']
+              config: CfgNode,
+              device: str):
+  inputs = batch['sentence'].to(device)
+  inputs_lengths = batch['sentence_lengts'].to(device)
+  gold_outputs = batch['concepts'].to(device)
 
   if config.USE_POINTER_GENERATOR:
     unnumericalized_inputs = batch['initial_sentence']
@@ -256,9 +259,9 @@ def train_step(model: nn.Module,
                vocabs: Vocabs,
                config: CfgNode,
                teacher_forcing_ratio: float):
-  inputs = batch['sentence']
-  inputs_lengths = batch['sentence_lengts']
-  gold_outputs = batch['concepts']
+  inputs = batch['sentence'].to(device)
+  inputs_lengths = batch['sentence_lengts'].to(device)
+  gold_outputs = batch['concepts'].to(device)
 
   if config.USE_POINTER_GENERATOR:
     # initial sentence (un-numericalized)
@@ -279,6 +282,7 @@ def train_step(model: nn.Module,
   f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab, config)
   loss = compute_loss(criterion, logits, gold_outputs)
   loss.backward()
+  nn.utils.clip_grad_norm_(model.parameters(), 0.5)
   optimizer.step()
   return loss, f_score
 
@@ -290,10 +294,11 @@ def train_model(model: nn.Module,
                 vocabs: Vocabs,
                 train_data_loader: DataLoader,
                 dev_data_loader: DataLoader,
+                device: str,
                 train_writer: SummaryWriter,
                 eval_writer: SummaryWriter,
                 config: CfgNode,
-                device):
+                scheduler=None):
   model.train()
   teacher_forcing_ratio = 1
   step_teacher_forcing_ratio = teacher_forcing_ratio / no_epochs
@@ -322,6 +327,8 @@ def train_model(model: nn.Module,
     eval_writer.add_scalar('loss', dev_loss, epoch)
     eval_writer.add_scalar('f-score', fscore, epoch)
     train_writer.add_scalar('f-score', batch_f_score_train, epoch)
+    if scheduler:
+      scheduler.step()
 
 
 def generate_sentences():
@@ -384,8 +391,11 @@ def main(_):
         train_paths, vocabs, device, seq2seq_setting=True, ordered=True)
     dev_dataset = AMRDataset(
         dev_paths, vocabs, device, seq2seq_setting=True, ordered=True)
+    bos_index = list(vocabs.concept_vocab.keys()).index(ROOT)
+
   else:
     all_sentences, all_sentences_dev, vocabs = generate_sentences()
+    bos_index = list(vocabs.concept_vocab.keys()).index(BOS)
 
     train_dataset = DummySeq2SeqDataset(all_sentences,
                                         vocabs,
@@ -448,8 +458,13 @@ def main(_):
   if FLAGS.transformer:
     model = TransformerSeq2Seq(vocabs.token_vocab_size,
                                vocabs.concept_vocab_size,
+                               bos_index,
                                cfg.CONCEPT_IDENTIFICATION.TRANSF_BASED,
                                device=device).to(device)
+    lr = 0.2 # learning rate
+    optimizer = torch.optim.RMSprop(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1.0, gamma=0.1)
+
     tensorboard_dir = 'temp/concept_identification_transf'
   else:
     model = Seq2seq(
@@ -459,8 +474,8 @@ def main(_):
       glove_embeddings.embeddings_vocab if FLAGS.use_glove else None,
       device=device).to(device)
     tensorboard_dir = 'temp/concept_identification'
+    optimizer = optim.Adam(model.parameters())
 
-  optimizer = optim.Adam(model.parameters())
   criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
 
   # Use --logdir temp/heads_selection for tensorboard dev upload

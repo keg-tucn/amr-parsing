@@ -246,12 +246,11 @@ class AMRDataset(Dataset):
     # processing method for doing so after loading the data.
     if self.seq2seq_setting:
       new_batch = {
-        SENTENCE_KEY: torch.transpose(torch.stack(padded_sentences), 0, 1).to(self.device),
+        SENTENCE_KEY: torch.transpose(torch.stack(padded_sentences),0,1),
         # This is left on the cpu for 'pack_padded_sequence'.
         SENTENCE_STR_KEY: padded_initial_sentences,
         SENTENCE_LEN_KEY: torch.tensor(sentence_lengths),
-        CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts), 0, 1).to(self.device),
-        CONCEPTS_STR_KEY: padded_concepts_string
+        CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts),0,1)
       }
     else:
       new_batch = {

@@ -9,8 +9,6 @@ import torch.nn as nn
 from torch.nn import Transformer
 from yacs.config import CfgNode
 
-from data_pipeline.dataset import BOS_IDX
-
 class PositionalEncoding(nn.Module):
   """
   Positional encoding for transformer model
@@ -45,6 +43,7 @@ class TransformerSeq2Seq(nn.Module):
   def __init__(self,
                input_vocab_size: int,
                output_vocab_size: int,
+               bos_index: int,
                # config CONCEPT_IDENTIFICATION.LSTM_BASED
                config: CfgNode,
                dropout=0.5,
@@ -53,19 +52,20 @@ class TransformerSeq2Seq(nn.Module):
     hidden_size = config.HIDDEN_SIZE
     embedding_dim = config.EMB_DIM
     head_number = config.NUM_HEADS
+    self.BOS_IDX = bos_index
+    self.device = device
     # Embed inputs
-    self.enc_embedding = nn.Embedding(input_vocab_size, embedding_dim).to(device)
-    self.dec_embedding = nn.Embedding(output_vocab_size, embedding_dim).to(device)
+    self.enc_embedding = nn.Embedding(input_vocab_size, embedding_dim).to(self.device)
+    self.dec_embedding = nn.Embedding(output_vocab_size, embedding_dim).to(self.device)
     # Positional Encoding
     self.pos_encoder = PositionalEncoding(embedding_dim, dropout)
     self.pos_decoder = PositionalEncoding(embedding_dim, dropout)
     # Vanilla Transformer
+    
     self.transformer = Transformer(embedding_dim, head_number, hidden_size,
-                                   dropout=dropout)
+                                   dropout=dropout).to(self.device)
     # Linear Transformation of Transformer Output
-    self.dense = nn.Linear(embedding_dim, output_vocab_size).to(device)
-    # Device to train on
-    self.device = device
+    self.dense = nn.Linear(embedding_dim, output_vocab_size).to(self.device)
 
 
   def make_triangular_mask(self, inp):
@@ -77,13 +77,25 @@ class TransformerSeq2Seq(nn.Module):
   def apply_layer(self,
                   input_sequence, output_sequence,
                   src_mask=None,trg_mask=None):
+    """
+    Function for applying the transformer layer
+
+    Arguments:
+      input_sequence: input to the decoder
+      output_sequence: input to the decoder
+      src_mask:
+      trg_mask: target mask for attention
+    Returns
+      logits: tensor of shape ...
+      predictions: tensor of shape ...
+    """
     output_sequence = self.dec_embedding(output_sequence)
     output_sequence = self.pos_decoder(output_sequence)
     trg_mask = self.make_triangular_mask(output_sequence)
     transformer_out = self.transformer(input_sequence,
-                                      output_sequence,
-                                      src_mask=src_mask,
-                                      tgt_mask=trg_mask)
+                                       output_sequence,
+                                       src_mask=src_mask,
+                                       tgt_mask=trg_mask)
     logits = self.dense(transformer_out)
     activated_outputs = torch.softmax(logits, dim=-1)
     predictions = torch.argmax(activated_outputs, dim=-1)
@@ -112,11 +124,13 @@ class TransformerSeq2Seq(nn.Module):
     input_sequence = self.pos_encoder(input_sequence)
     if self.training:
       trg_mask = self.make_triangular_mask(gold_output_sequence)
-      logits, predictions = self.apply_layer(input_sequence, gold_output_sequence, trg_mask=trg_mask)
+      logits, predictions = self.apply_layer(input_sequence,
+                                             gold_output_sequence,
+                                             trg_mask=trg_mask)
     else:
       predictions = torch.zeros(
           max_out_length, input_sequence.shape[1]).type(torch.LongTensor).to(self.device)
-      predictions[0, :] = BOS_IDX
+      predictions[0, :] = self.BOS_IDX
       trg_mask = self.make_triangular_mask(predictions)
       # Apply model max_out_len times
       for i in range(max_out_length):

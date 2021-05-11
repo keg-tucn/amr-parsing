@@ -121,9 +121,14 @@ def compute_smatch(gold_outputs, predictions):
   gold_file = io.StringIO(gold_outputs)
   pred_file = io.StringIO(predictions)
 
-  smatch_score = {}
-  smatch_score["precision"], smatch_score["recall"], smatch_score["best_f_score"] = \
-    next(score_amr_pairs(gold_file, pred_file))
+  smatch_score = {"precision": 0,
+                  "recall": 0,
+                  "best_f_score": 0}
+  try:
+    smatch_score["precision"], smatch_score["recall"], smatch_score["best_f_score"] = \
+      next(score_amr_pairs(gold_file, pred_file))
+  except AttributeError:
+    print('Something went wrong went calculating smatch.')
 
   return smatch_score
 
@@ -131,7 +136,7 @@ def replace_all_edge_labels(amr_str: str, new_edge_label: str):
   """Replaces all edge labels in an AMR with a given edge and returns the
   new AMR.
   """
-  new_amr_str = re.sub(r':[^\s]*', new_edge_label, amr_str)
+  new_amr_str = re.sub(r':[a-zA-Z0-9]+', new_edge_label, amr_str)
   return new_amr_str
 
 def gather_logged_data(logger: DataLogger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str):
@@ -144,9 +149,9 @@ def gather_logged_data(logger: DataLogger, inputs_lengths, logits, mask, gold_ad
     gold_relations = gold_adj_mat[logged_index][:sentence_len, :sentence_len]
     gold_relations[gold_relations != 0] = 1
     logger.set_img_info(concepts_str[logged_index], concepts_str[logged_index],
-                             scores.cpu().detach().numpy(),
-                             color_scores.cpu().detach().numpy(),
-                             gold_relations.cpu().detach().numpy())
+                        scores.cpu().detach().numpy(),
+                        color_scores.cpu().detach().numpy(),
+                        gold_relations.cpu().detach().numpy())
 
 def eval_step(model: nn.Module,
               optimizer: nn.Module,
@@ -337,7 +342,7 @@ def main(_):
 
   model = HeadsSelection(vocabs.concept_vocab_size, cfg.HEAD_SELECTION,
                          glove_embeddings.embeddings_vocab if FLAGS.use_glove else None).to(device)
-  optimizer = optim.Adam(model.parameters())
+  optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
   #Use --logdir temp/heads_selection for tensorboard dev upload
   tensorboard_dir = 'temp/heads_selection'

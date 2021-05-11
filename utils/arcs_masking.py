@@ -53,7 +53,7 @@ def create_sampling_mask(gold_adj_mat: torch.tensor,
     probabilities = torch.where(sampling_candidates, prob_value, 0.)
     selection = torch.bernoulli(probabilities)
 
-    mask = (selection == 1.)
+    mask = torch.logical_or((selection == 1.), bin_adj_mat)
     return mask
 
 

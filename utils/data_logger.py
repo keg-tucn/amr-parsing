@@ -1,5 +1,6 @@
 from torch.utils.tensorboard import SummaryWriter
-from utils.tensorboard_utils import save_masked_scores_img_to_tensorboard
+from utils.tensorboard_utils import save_masked_scores_img_to_tensorboard,\
+    save_scores_img_to_tensorboard
 
 LOSS_TEXT = 'loss'
 SMATCH_F_SCORE_TEXT = 'smatch_f_score'
@@ -7,7 +8,6 @@ SMATCH_PRECISION_TEXT = 'smatch_precision'
 SMATCH_RECALL_TEXT = 'smatch_recall'
 AMR_LOG_TEXT = 'AMR COMPARISON'
 AMR_IMG_SCORES = 'SCORES'
-AMR_IMG_PREDS = 'PREDICTIONS (binary)'
 AMR_IMG_RELS = 'GOLD RELATIONS (binary)'
 
 
@@ -69,10 +69,10 @@ class DataLogger:
         self.writer.add_scalar(SMATCH_PRECISION_TEXT, self.smatch_precision, self.epoch)
         self.writer.add_scalar(SMATCH_RECALL_TEXT, self.smatch_recall, self.epoch)
         self.writer.add_text(AMR_LOG_TEXT, self.logged_text, self.epoch)
-        save_masked_scores_img_to_tensorboard(self.writer, AMR_IMG_SCORES, self.epoch,
-                                              self.input_seq, self.output_seq,
-                                              self.text_scores, self.color_scores,
-                                              on_training_flow=self.on_training_flow)
+        save_scores_img_to_tensorboard(self.writer, AMR_IMG_SCORES, self.epoch,
+                                       self.input_seq, self.output_seq,
+                                       self.text_scores,
+                                       on_training_flow=self.on_training_flow)
         save_masked_scores_img_to_tensorboard(self.writer, AMR_IMG_RELS, self.epoch,
                                               self.input_seq, self.output_seq,
                                               self.gold_relations, self.color_scores,

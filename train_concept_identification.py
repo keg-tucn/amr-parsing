@@ -82,9 +82,6 @@ def compute_fScore(gold_outputs,
     concepts_as_list_predicted, concepts_as_list_gold = tensor_to_list(gold_outputs, predicted_outputs, eos_index,
                                                                        extended_vocab)
 
-    print("concepts_as_list_gold", concepts_as_list_gold)
-    print("concepts_as_list_predicted", concepts_as_list_predicted)
-
     f_score = 0
     batch_size = len(concepts_as_list_gold)
     for i in range(batch_size):
@@ -152,8 +149,6 @@ def indices_to_words(outputs_no_padding,
     # TODO put config and use concept_vocab if not pointer generator
     ids_to_concepts_list = list(extended_vocab.keys())
     concepts_as_list = []
-    print("ids_to_concepts_list ", len(ids_to_concepts_list))
-    print("outputs_no_padding ", len(outputs_no_padding))
     for sentence in outputs_no_padding:
         concepts = []
         for id in sentence:

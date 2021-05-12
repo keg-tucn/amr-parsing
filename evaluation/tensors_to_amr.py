@@ -104,6 +104,9 @@ def generate_amr_str_rec(root: int, seen_nodes: List[int], depth,
                                             concepts, concepts_var, adj_mat,
                                             relation_label)
             child_representation = "{} {}".format(relation_label, rec_repr)
+          else:
+            child_representation = ''
+            break
       amr_str += "\n".ljust(depth + 1, "\t") + child_representation
   amr_str += ")"
   return amr_str
@@ -122,6 +125,11 @@ def get_unlabelled_amr_str_from_tensors(concepts: torch.tensor,
     unk_rel_label: label that will be put on edges (cause this is the
       unlabelled setting).
   """
+  # Post-processing (don't allow self edges)
+  max_seq_len = adj_mat.shape[1]
+  mask = torch.eye(max_seq_len, max_seq_len, dtype=bool)
+  adj_mat.masked_fill_(mask, 0)
+
   root_idx, concepts_as_list, adj_mat_as_list = tensors_to_lists(
     concepts, concepts_length, adj_mat, vocabs)
   concepts_var = generate_variables(concepts_as_list)

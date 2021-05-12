@@ -26,9 +26,10 @@ from data_pipeline.glove_embeddings import GloVeEmbeddings
 from utils.arcs_masking import create_mask
 from utils.data_logger import DataLogger
 
-from utils.config import get_default_config
-from model.models import HeadsSelection
+from config import get_default_config
+from models import HeadsSelection
 from evaluation.tensors_to_amr import get_unlabelled_amr_strings_from_tensors
+from evaluation.smatch_score import SmatchScore, initialize_smatch
 from smatch import score_amr_pairs
 
 import logging
@@ -121,11 +122,9 @@ def compute_smatch(gold_outputs, predictions):
   gold_file = io.StringIO(gold_outputs)
   pred_file = io.StringIO(predictions)
 
-  smatch_score = {"precision": 0,
-                  "recall": 0,
-                  "best_f_score": 0}
+  smatch_score = initialize_smatch()
   try:
-    smatch_score["precision"], smatch_score["recall"], smatch_score["best_f_score"] = \
+    smatch_score[SmatchScore.PRECISION], smatch_score[SmatchScore.RECALL], smatch_score[SmatchScore.F_SCORE] = \
       next(score_amr_pairs(gold_file, pred_file))
   except AttributeError:
     print('Something went wrong went calculating smatch.')
@@ -153,13 +152,24 @@ def gather_logged_data(logger: DataLogger, inputs_lengths, logits, mask, gold_ad
                         color_scores.cpu().detach().numpy(),
                         gold_relations.cpu().detach().numpy())
 
+def compute_results(gold_amr_str, inputs, inputs_lengths, predictions, vocabs, logger: DataLogger):
+  gold_outputs = [replace_all_edge_labels(a, UNK_REL_LABEL) for a in gold_amr_str]
+  predictions_strings = get_unlabelled_amr_strings_from_tensors(
+    inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
+
+  smatch_score = compute_smatch(gold_outputs, predictions_strings)
+  amr_comparison_text = '  \n'.join([gold_amr_str[logger.logged_example_index], ' VERSUS',
+                                     predictions_strings[logger.logged_example_index]])
+  return smatch_score, amr_comparison_text
+
 def eval_step(model: nn.Module,
               optimizer: nn.Module,
               vocabs: Vocabs,
               device: str,
               batch: torch.tensor,
               eval_logger: DataLogger,
-              config: CfgNode):
+              config: CfgNode,
+              log_res: bool=False):
   amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, \
   glove_concepts, concepts_str = get_gold_data(batch)
 
@@ -170,15 +180,14 @@ def eval_step(model: nn.Module,
   mask = create_mask(gold_adj_mat_device, inputs_lengths, config)
   gather_logged_data(eval_logger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str)
 
-  # Remove the edge labels for the gold AMRs before doing the smatch.
-  gold_outputs = [replace_all_edge_labels(a, UNK_REL_LABEL) for a in gold_amr_str]
-  predictions_strings = get_unlabelled_amr_strings_from_tensors(
-    inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
-
   loss = compute_loss(vocabs, inputs_lengths, logits, gold_adj_mat_device, config, mask)
-  smatch_score = compute_smatch(gold_outputs, predictions_strings)
-  amr_comparison_text = '  \n'.join([gold_amr_str[eval_logger.logged_example_index], ' VERSUS',
-                                     predictions_strings[eval_logger.logged_example_index]])
+
+  # Remove the edge labels for the gold AMRs before doing the smatch.
+  smatch_score = initialize_smatch()
+  amr_comparison_text = ''
+  if log_res:
+    smatch_score, amr_comparison_text = compute_results(
+      gold_amr_str, inputs, inputs_lengths, predictions, vocabs, eval_logger)
 
   return loss, smatch_score, amr_comparison_text
 
@@ -188,25 +197,22 @@ def evaluate_model(model: nn.Module,
                    device: str,
                    data_loader: DataLoader,
                    eval_logger: DataLogger,
-                   config: CfgNode):
+                   config: CfgNode,
+                   log_res: bool=False):
   model.eval()
   with torch.no_grad():
     epoch_loss = 0
     no_batches = 0
-    epoch_smatch = {
-      "precision": 0.0,
-      "recall": 0.0,
-      "best_f_score": 0.0
-    }
+    epoch_smatch = initialize_smatch()
     logged_text = "GOLD VS PREDICTED AMRS\n"
 
     for batch in data_loader:
       loss, smatch_score, amr_comparison_text = eval_step(
-        model, optimizer, vocabs, device, batch, eval_logger, config)
+        model, optimizer, vocabs, device, batch, eval_logger, config, log_res)
       epoch_loss += loss
-      epoch_smatch["precision"] += smatch_score["precision"]
-      epoch_smatch["recall"] += smatch_score["recall"]
-      epoch_smatch["best_f_score"] += smatch_score["best_f_score"]
+      epoch_smatch[SmatchScore.PRECISION] += smatch_score[SmatchScore.PRECISION]
+      epoch_smatch[SmatchScore.RECALL] += smatch_score[SmatchScore.RECALL]
+      epoch_smatch[SmatchScore.F_SCORE] += smatch_score[SmatchScore.F_SCORE]
       logged_text += 'Batch ' + str(no_batches) + ':\n'
       logged_text += amr_comparison_text + '\n----\n'
       no_batches += 1
@@ -221,7 +227,8 @@ def train_step(model: nn.Module,
                device: str,
                batch: Dict[str, torch.Tensor],
                train_logger: DataLogger,
-               config: CfgNode):
+               config: CfgNode,
+               log_results: bool=False):
   amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, \
   glove_concepts, concepts_str = get_gold_data(batch)
 
@@ -237,13 +244,11 @@ def train_step(model: nn.Module,
   loss.backward()
   optimizer.step()
 
-  gold_outputs = [replace_all_edge_labels(a, UNK_REL_LABEL) for a in gold_amr_str]
-  predictions_strings = get_unlabelled_amr_strings_from_tensors(
-    inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
-
-  smatch_score = compute_smatch(gold_outputs, predictions_strings)
-  amr_comparison_text = '  \n'.join([gold_amr_str[train_logger.logged_example_index], ' VERSUS',
-                                     predictions_strings[train_logger.logged_example_index]])
+  smatch_score = initialize_smatch()
+  amr_comparison_text = ''
+  if log_results:
+    smatch_score, amr_comparison_text = compute_results(
+      gold_amr_str, inputs, inputs_lengths, predictions, vocabs, train_logger)
 
   return loss, smatch_score, amr_comparison_text
 
@@ -258,43 +263,44 @@ def train_model(model: nn.Module,
                 dev_data_loader: DataLoader,
                 config: CfgNode):
   model.train()
-  for epoch in range(no_epochs):
-    train_logger.set_epoch(epoch)
-    eval_logger.set_epoch(epoch)
+  for epoch in range(1, no_epochs + 1):
     start_time = time.time()
     epoch_loss = 0
     no_batches = 0
-    train_smatch = {
-      "precision": 0.0,
-      "recall": 0.0,
-      "best_f_score": 0.0
-    }
+    train_smatch = initialize_smatch()
     train_text = ''
+    # Only generate amr_string & smatch at the end of training (expensive)
+    log_res_train = (epoch == no_epochs)
+    log_res_dev = epoch >= config.LOGGING_START_EPOCH
     for batch in train_data_loader:
       batch_loss, smatch_score, aux_text = train_step(
-        model, optimizer, vocabs, device, batch, train_logger, config)
-      train_smatch["precision"] += smatch_score["precision"]
-      train_smatch["recall"] += smatch_score["recall"]
-      train_smatch["best_f_score"] += smatch_score["best_f_score"]
+        model, optimizer, vocabs, device, batch, train_logger, config, log_res_train)
+      train_smatch[SmatchScore.PRECISION] += smatch_score[SmatchScore.PRECISION]
+      train_smatch[SmatchScore.RECALL] += smatch_score[SmatchScore.RECALL]
+      train_smatch[SmatchScore.F_SCORE] += smatch_score[SmatchScore.F_SCORE]
       train_text += 'Batch ' + str(no_batches) + ':\n' + aux_text + '\n----\n'
       epoch_loss += batch_loss
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
     dev_loss, smatch, logged_text = evaluate_model(
-      model, optimizer, vocabs, device, dev_data_loader, eval_logger, config)
+      model, optimizer, vocabs, device, dev_data_loader, eval_logger, config, log_res_dev)
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time
-    train_logger.set_loss(epoch_loss)
-    eval_logger.set_loss(dev_loss)
-    train_logger.set_smatch(train_smatch['best_f_score'], train_smatch['precision'], train_smatch['recall'])
-    eval_logger.set_smatch(smatch['best_f_score'], smatch['precision'], smatch['recall'])
-    train_logger.set_logged_text(train_text)
-    eval_logger.set_logged_text(logged_text)
-    train_logger.to_tensorboard()
-    eval_logger.to_tensorboard()
-    print('Epoch {} (took {:.2f} seconds)'.format(epoch+1, time_passed))
-    print('Train loss: {}, dev loss: {}, smatch_f_score: {} '.format(epoch_loss, dev_loss, smatch['best_f_score']))
+    write_res_to_tensorboard(train_logger, epoch, epoch_loss, train_smatch, train_text)
+    write_res_to_tensorboard(eval_logger, epoch, dev_loss, smatch, logged_text)
+    print('Epoch {} (took {:.2f} seconds)'.format(epoch, time_passed))
+    print('Train loss: {}, dev loss: {}, smatch_f_score: {} '.format(
+      epoch_loss, dev_loss, smatch[SmatchScore.F_SCORE]))
+
+def write_res_to_tensorboard(logger: DataLogger, epoch_no, loss, smatch, text):
+  logger.set_epoch(epoch_no)
+  logger.set_loss(loss)
+  logger.set_smatch(smatch[SmatchScore.F_SCORE],
+                    smatch[SmatchScore.PRECISION],
+                    smatch[SmatchScore.RECALL])
+  logger.set_logged_text(text)
+  logger.to_tensorboard()
 
 def main(_):
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -342,7 +348,7 @@ def main(_):
 
   model = HeadsSelection(vocabs.concept_vocab_size, cfg.HEAD_SELECTION,
                          glove_embeddings.embeddings_vocab if FLAGS.use_glove else None).to(device)
-  optimizer = optim.Adam(model.parameters(), lr=1e-4)
+  optimizer = optim.Adam(model.parameters())
 
   #Use --logdir temp/heads_selection for tensorboard dev upload
   tensorboard_dir = 'temp/heads_selection'

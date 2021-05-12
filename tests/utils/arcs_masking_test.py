@@ -1,7 +1,7 @@
 from absl.testing import absltest
 import torch
 
-from utils.config import get_default_config
+from config import get_default_config
 from utils.arcs_masking import create_mask, create_sampling_mask, \
     create_fake_root_mask, create_padding_mask
 

@@ -27,7 +27,7 @@ GLOVE_CONCEPTS_KEY = 'glove_concepts'
 CONCEPTS_LEN_KEY = 'concepts_lengths'
 ADJ_MAT_KEY = 'adj_mat'
 AMR_STR_KEY = 'amr_str'
-CONCEPTS_STR_KEY = 'concepts_str_key'
+CONCEPTS_STR_KEY = 'concepts_strings'
 
 def add_eos(training_entry: TrainingEntry, eos_token: str):
   training_entry.sentence.append(eos_token)

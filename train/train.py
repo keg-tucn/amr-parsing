@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from data_pipeline.dataset import AMRDataset
 from data_pipeline.data_reading import get_paths
 
-from model.models import Seq2seq
+from models import Seq2seq
 
 BATCH_SIZE = 16
 

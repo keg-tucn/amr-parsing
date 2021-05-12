@@ -1,9 +1,9 @@
 from absl.testing import absltest
 import torch
 
-from model.models import Encoder, AdditiveAttention, DecoderStep, Decoder, Seq2seq
-from model.models import DenseMLP, EdgeScoring, HeadsSelection
-from utils.config import get_default_config
+from models import Encoder, AdditiveAttention, DecoderStep, Decoder, Seq2seq
+from models import DenseMLP, EdgeScoring, HeadsSelection
+from config import get_default_config
 
 class ModelsTest(absltest.TestCase):
 

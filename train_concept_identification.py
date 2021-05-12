@@ -16,8 +16,8 @@ from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
 from data_pipeline.dataset import PAD, EOS, UNK, PAD_IDX
 from data_pipeline.dataset import AMRDataset
-from utils.config import get_default_config
-from model.models import Seq2seq
+from config import get_default_config
+from models import Seq2seq
 from data_pipeline.glove_embeddings import GloVeEmbeddings
 
 FLAGS = flags.FLAGS

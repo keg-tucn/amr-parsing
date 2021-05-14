@@ -29,7 +29,7 @@ from utils.data_logger import DataLogger
 from config import get_default_config
 from models import HeadsSelection
 from evaluation.tensors_to_amr import get_unlabelled_amr_strings_from_tensors
-from evaluation.smatch_score import SmatchScore, initialize_smatch
+from evaluation.smatch_score import SmatchScore, initialize_smatch, calc_edges_scores
 from smatch import score_amr_pairs
 
 import logging
@@ -179,6 +179,7 @@ def eval_step(model: nn.Module,
   logits, predictions = model(inputs_device, inputs_lengths)
   mask = create_mask(gold_adj_mat_device, inputs_lengths, config)
   gather_logged_data(eval_logger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str)
+  f_score, accuracy = calc_edges_scores(gold_adj_mat, predictions, inputs_lengths)
 
   loss = compute_loss(vocabs, inputs_lengths, logits, gold_adj_mat_device, config, mask)
 
@@ -189,7 +190,7 @@ def eval_step(model: nn.Module,
     smatch_score, amr_comparison_text = compute_results(
       gold_amr_str, inputs, inputs_lengths, predictions, vocabs, eval_logger)
 
-  return loss, smatch_score, amr_comparison_text
+  return loss, smatch_score, amr_comparison_text, f_score, accuracy
 
 def evaluate_model(model: nn.Module,
                    optimizer: nn.Module,
@@ -204,12 +205,16 @@ def evaluate_model(model: nn.Module,
     epoch_loss = 0
     no_batches = 0
     epoch_smatch = initialize_smatch()
+    f_score = 0
+    accuracy = 0
     logged_text = "GOLD VS PREDICTED AMRS\n"
 
     for batch in data_loader:
-      loss, smatch_score, amr_comparison_text = eval_step(
+      loss, smatch_score, amr_comparison_text, aux_f_score, aux_accuracy = eval_step(
         model, optimizer, vocabs, device, batch, eval_logger, config, log_res)
       epoch_loss += loss
+      f_score += aux_f_score
+      accuracy += aux_accuracy
       epoch_smatch[SmatchScore.PRECISION] += smatch_score[SmatchScore.PRECISION]
       epoch_smatch[SmatchScore.RECALL] += smatch_score[SmatchScore.RECALL]
       epoch_smatch[SmatchScore.F_SCORE] += smatch_score[SmatchScore.F_SCORE]
@@ -217,9 +222,11 @@ def evaluate_model(model: nn.Module,
       logged_text += amr_comparison_text + '\n----\n'
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
+    f_score = f_score / no_batches
+    accuracy = accuracy / no_batches
     epoch_smatch = {score_name: score_value / no_batches for score_name, score_value in epoch_smatch.items()}
     logged_text = logged_text.replace('\n', '\n\n')
-    return epoch_loss, epoch_smatch, logged_text
+    return epoch_loss, epoch_smatch, logged_text, f_score, accuracy
 
 def train_step(model: nn.Module,
                optimizer: Optimizer,
@@ -240,6 +247,7 @@ def train_step(model: nn.Module,
   mask = create_mask(gold_adj_mat_device, inputs_lengths, config)
   gather_logged_data(train_logger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str)
 
+  f_score, accuracy = calc_edges_scores(gold_adj_mat, predictions, inputs_lengths)
   loss = compute_loss(vocabs, inputs_lengths, logits, gold_adj_mat_device, config, mask)
   loss.backward()
   optimizer.step()
@@ -250,7 +258,7 @@ def train_step(model: nn.Module,
     smatch_score, amr_comparison_text = compute_results(
       gold_amr_str, inputs, inputs_lengths, predictions, vocabs, train_logger)
 
-  return loss, smatch_score, amr_comparison_text
+  return loss, smatch_score, amr_comparison_text, f_score, accuracy
 
 def train_model(model: nn.Module,
                 optimizer: Optimizer,
@@ -267,35 +275,44 @@ def train_model(model: nn.Module,
     start_time = time.time()
     epoch_loss = 0
     no_batches = 0
+    train_f_score = 0
+    train_accuracy = 0
     train_smatch = initialize_smatch()
     train_text = ''
     # Only generate amr_string & smatch at the end of training (expensive)
     log_res_train = (epoch == no_epochs)
     log_res_dev = epoch >= config.LOGGING_START_EPOCH
     for batch in train_data_loader:
-      batch_loss, smatch_score, aux_text = train_step(
+      batch_loss, smatch_score, aux_text, aux_f_score, aux_accuracy = train_step(
         model, optimizer, vocabs, device, batch, train_logger, config, log_res_train)
       train_smatch[SmatchScore.PRECISION] += smatch_score[SmatchScore.PRECISION]
       train_smatch[SmatchScore.RECALL] += smatch_score[SmatchScore.RECALL]
       train_smatch[SmatchScore.F_SCORE] += smatch_score[SmatchScore.F_SCORE]
       train_text += 'Batch ' + str(no_batches) + ':\n' + aux_text + '\n----\n'
       epoch_loss += batch_loss
+      train_f_score += aux_f_score
+      train_accuracy += aux_accuracy
       no_batches += 1
     epoch_loss = epoch_loss / no_batches
-    dev_loss, smatch, logged_text = evaluate_model(
+    train_accuracy = train_accuracy / no_batches
+    train_f_score = train_f_score / no_batches
+    dev_loss, smatch, logged_text, f_score, accuracy = evaluate_model(
       model, optimizer, vocabs, device, dev_data_loader, eval_logger, config, log_res_dev)
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time
-    write_res_to_tensorboard(train_logger, epoch, epoch_loss, train_smatch, train_text)
-    write_res_to_tensorboard(eval_logger, epoch, dev_loss, smatch, logged_text)
+    write_res_to_tensorboard(train_logger, epoch, epoch_loss, train_smatch, train_text, train_f_score, train_accuracy)
+    write_res_to_tensorboard(eval_logger, epoch, dev_loss, smatch, logged_text, f_score, accuracy)
     print('Epoch {} (took {:.2f} seconds)'.format(epoch, time_passed))
     print('Train loss: {}, dev loss: {}, smatch_f_score: {} '.format(
       epoch_loss, dev_loss, smatch[SmatchScore.F_SCORE]))
+    print('F-score: {}, accuracy: {}'.format(f_score, accuracy))
+    print('Train f-score: {}, train accuracy: {}'.format(train_f_score, train_accuracy))
 
-def write_res_to_tensorboard(logger: DataLogger, epoch_no, loss, smatch, text):
+def write_res_to_tensorboard(logger: DataLogger, epoch_no, loss, smatch, text, f_score, accuracy):
   logger.set_epoch(epoch_no)
   logger.set_loss(loss)
+  logger.set_edge_scores(f_score, accuracy)
   logger.set_smatch(smatch[SmatchScore.F_SCORE],
                     smatch[SmatchScore.PRECISION],
                     smatch[SmatchScore.RECALL])

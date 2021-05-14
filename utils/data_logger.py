@@ -6,6 +6,8 @@ LOSS_TEXT = 'loss'
 SMATCH_F_SCORE_TEXT = 'smatch_f_score'
 SMATCH_PRECISION_TEXT = 'smatch_precision'
 SMATCH_RECALL_TEXT = 'smatch_recall'
+F_SCORE_TEXT = 'f_score'
+ACCURACY_TEXT = 'accuracy'
 AMR_LOG_TEXT = 'AMR COMPARISON'
 AMR_IMG_SCORES = 'SCORES'
 AMR_IMG_RELS = 'GOLD RELATIONS (binary)'
@@ -22,6 +24,8 @@ class DataLogger:
         self.smatch_f_score = 0.0
         self.smatch_precision = 0.0
         self.smatch_recall = 0.0
+        self.f_score = 0.0
+        self.accuracy = 0.0
         self.logged_text = ""
         self.input_seq = []
         self.output_seq = []
@@ -39,6 +43,10 @@ class DataLogger:
         self.smatch_f_score = smatch_f_score
         self.smatch_precision = smatch_precision
         self.smatch_recall = smatch_recall
+
+    def set_edge_scores(self, f_score, accuracy):
+        self.f_score = f_score
+        self.accuracy = accuracy
 
     def set_logged_text(self, logged_text):
         self.logged_text = logged_text
@@ -68,6 +76,8 @@ class DataLogger:
         self.writer.add_scalar(SMATCH_F_SCORE_TEXT, self.smatch_f_score, self.epoch)
         self.writer.add_scalar(SMATCH_PRECISION_TEXT, self.smatch_precision, self.epoch)
         self.writer.add_scalar(SMATCH_RECALL_TEXT, self.smatch_recall, self.epoch)
+        self.writer.add_scalar(F_SCORE_TEXT, self.f_score, self.epoch)
+        self.writer.add_scalar(ACCURACY_TEXT, self.accuracy, self.epoch)
         self.writer.add_text(AMR_LOG_TEXT, self.logged_text, self.epoch)
         save_scores_img_to_tensorboard(self.writer, AMR_IMG_SCORES, self.epoch,
                                        self.input_seq, self.output_seq,

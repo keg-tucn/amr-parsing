@@ -20,7 +20,7 @@ from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
 from data_pipeline.dataset import PAD, EOS, UNK
 from data_pipeline.dataset import AMR_ID_KEY, CONCEPTS_KEY, CONCEPTS_LEN_KEY,\
-  GLOVE_CONCEPTS_KEY, ADJ_MAT_KEY, AMR_STR_KEY, CONCEPTS_STR_KEY
+  GLOVE_CONCEPTS_KEY, ADJ_MAT_KEY, AMR_STR_KEY
 from data_pipeline.dataset import AMRDataset
 from data_pipeline.glove_embeddings import GloVeEmbeddings
 from utils.arcs_masking import create_mask
@@ -73,9 +73,8 @@ def get_gold_data(batch: torch.tensor):
   gold_adj_mat = batch[ADJ_MAT_KEY]
   gold_amr_str = batch[AMR_STR_KEY]
   glove_concepts = batch[GLOVE_CONCEPTS_KEY]
-  concepts_str = batch[CONCEPTS_STR_KEY]
 
-  return amr_ids, gold_concepts, gold_concepts_length, gold_adj_mat, gold_amr_str, glove_concepts, concepts_str
+  return amr_ids, gold_concepts, gold_concepts_length, gold_adj_mat, gold_amr_str, glove_concepts
 
 def compute_loss(vocabs: Vocabs, concepts_lengths: torch.Tensor,
                  logits: torch.Tensor, gold_outputs: torch.Tensor,
@@ -135,7 +134,7 @@ def replace_all_edge_labels(amr_str: str, new_edge_label: str):
   """Replaces all edge labels in an AMR with a given edge and returns the
   new AMR.
   """
-  new_amr_str = re.sub(r':[a-zA-Z0-9]+', new_edge_label, amr_str)
+  new_amr_str = re.sub(r':[a-zA-Z0-9~.]+', new_edge_label, amr_str)
   return new_amr_str
 
 def gather_logged_data(logger: DataLogger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str):
@@ -162,6 +161,25 @@ def compute_results(gold_amr_str, inputs, inputs_lengths, predictions, vocabs, l
                                      predictions_strings[logger.logged_example_index]])
   return smatch_score, amr_comparison_text
 
+def decode_concepts(inputs, inputs_lengths, vocabs: Vocabs):
+  inputs_no_padding = []
+  for index in range(inputs_lengths.shape[0]):
+    sentence = inputs[:,index]
+    pos = inputs_lengths[index].item()
+    no_pad_sen = sentence[:pos]
+    inputs_no_padding.append(no_pad_sen)
+
+  ids_to_concepts_list = list(vocabs.concept_vocab.keys())
+  concepts_as_list = []
+  for sentence in inputs_no_padding:
+    decoded_sen = []
+    for word in sentence:
+      decoded_word = ids_to_concepts_list[int(word)]
+      decoded_sen.append(decoded_word)
+    concepts_as_list.append(decoded_sen)
+
+  return concepts_as_list
+
 def eval_step(model: nn.Module,
               optimizer: nn.Module,
               vocabs: Vocabs,
@@ -170,14 +188,14 @@ def eval_step(model: nn.Module,
               eval_logger: DataLogger,
               config: CfgNode,
               log_res: bool=False):
-  amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, \
-  glove_concepts, concepts_str = get_gold_data(batch)
+  amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, glove_concepts = get_gold_data(batch)
 
   optimizer.zero_grad()
   inputs_device = inputs.to(device)
   gold_adj_mat_device = gold_adj_mat.to(device)
   logits, predictions = model(inputs_device, inputs_lengths)
   mask = create_mask(gold_adj_mat_device, inputs_lengths, config)
+  concepts_str = decode_concepts(inputs, inputs_lengths, vocabs)
   gather_logged_data(eval_logger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str)
   f_score, accuracy = calc_edges_scores(gold_adj_mat, predictions, inputs_lengths)
 
@@ -236,8 +254,7 @@ def train_step(model: nn.Module,
                train_logger: DataLogger,
                config: CfgNode,
                log_results: bool=False):
-  amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, \
-  glove_concepts, concepts_str = get_gold_data(batch)
+  amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, glove_concepts = get_gold_data(batch)
 
   optimizer.zero_grad()
   # Move to trainig device (eg. cuda).
@@ -245,6 +262,7 @@ def train_step(model: nn.Module,
   gold_adj_mat_device = gold_adj_mat.to(device)
   logits, predictions = model(inputs_device, inputs_lengths)
   mask = create_mask(gold_adj_mat_device, inputs_lengths, config)
+  concepts_str = decode_concepts(inputs, inputs_lengths, vocabs)
   gather_logged_data(train_logger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str)
 
   f_score, accuracy = calc_edges_scores(gold_adj_mat, predictions, inputs_lengths)
@@ -280,7 +298,7 @@ def train_model(model: nn.Module,
     train_smatch = initialize_smatch()
     train_text = ''
     # Only generate amr_string & smatch at the end of training (expensive)
-    log_res_train = (epoch == no_epochs)
+    log_res_train = False
     log_res_dev = epoch >= config.LOGGING_START_EPOCH
     for batch in train_data_loader:
       batch_loss, smatch_score, aux_text, aux_f_score, aux_accuracy = train_step(

@@ -27,7 +27,6 @@ GLOVE_CONCEPTS_KEY = 'glove_concepts'
 CONCEPTS_LEN_KEY = 'concepts_lengths'
 ADJ_MAT_KEY = 'adj_mat'
 AMR_STR_KEY = 'amr_str'
-CONCEPTS_STR_KEY = 'concepts_strings'
 
 def add_eos(training_entry: TrainingEntry, eos_token: str):
   training_entry.sentence.append(eos_token)
@@ -129,8 +128,7 @@ class AMRDataset(Dataset):
           CONCEPTS_KEY: torch.tensor(concepts, dtype=torch.long),
           GLOVE_CONCEPTS_KEY: torch.tensor(glove_concepts, dtype=torch.long),
           ADJ_MAT_KEY: torch.tensor(adj_mat, dtype=torch.long),
-          AMR_STR_KEY: amr_str_no_align,
-          CONCEPTS_STR_KEY: training_entry.concepts
+          AMR_STR_KEY: amr_str_no_align
         }
         self.fields_by_id[id] = field
     # Order them by sentence length.
@@ -159,8 +157,7 @@ class AMRDataset(Dataset):
     glove_concepts = self.fields_by_id[id][GLOVE_CONCEPTS_KEY]
     adj_mat = self.fields_by_id[id][ADJ_MAT_KEY]
     amr_str = self.fields_by_id[id][AMR_STR_KEY]
-    concepts_str = self.fields_by_id[id][CONCEPTS_STR_KEY]
-    return id, sentence, concepts, glove_concepts, adj_mat, amr_str, concepts_str
+    return id, sentence, concepts, glove_concepts, adj_mat, amr_str
 
   def collate_fn(self, batch):
     amr_ids = []
@@ -171,16 +168,14 @@ class AMRDataset(Dataset):
     amr_strings = []
     sentence_lengths = []
     concepts_lengths = []
-    concepts_str = []
     for entry in batch:
-      amr_id, sentence, concepts, glove_concepts, adj_mat, amr_str, concepts_as_str = entry
+      amr_id, sentence, concepts, glove_concepts, adj_mat, amr_str = entry
       amr_ids.append(amr_id)
       batch_sentences.append(sentence)
       batch_concepts.append(concepts)
       batch_glove_concepts.append(glove_concepts)
       batch_adj_mats.append(adj_mat)
       amr_strings.append(amr_str)
-      concepts_str.append(concepts_as_str)
       sentence_lengths.append(len(sentence))
       concepts_lengths.append(len(concepts))
     # Get max lengths for padding.
@@ -220,8 +215,7 @@ class AMRDataset(Dataset):
         # This is left on the cpu for 'pack_padded_sequence'.
         CONCEPTS_LEN_KEY: torch.tensor(concepts_lengths),
         ADJ_MAT_KEY: torch.stack(padded_adj_mats),
-        AMR_STR_KEY: amr_strings,
-        CONCEPTS_STR_KEY: concepts_str
+        AMR_STR_KEY: amr_strings
       }
     return new_batch
 

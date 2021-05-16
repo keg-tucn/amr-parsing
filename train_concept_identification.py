@@ -18,6 +18,7 @@ from data_pipeline.dataset import PAD, EOS, UNK, PAD_IDX
 from data_pipeline.dataset import AMRDataset
 from config import get_default_config
 from models import Seq2seq
+from data_pipeline.glove_embeddings import GloVeEmbeddings
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('config',
@@ -40,6 +41,9 @@ flags.DEFINE_integer('no_epochs',
                      short_name='e',
                      default=20,
                      help=('Number of epochs.'))
+flags.DEFINE_boolean('use_glove',
+                     default=False,
+                     help=('Flag which tells whether model should use GloVe Embeddings or not.'))
 
 def compute_loss(criterion, logits, gold_outputs):
   """Computes cross entropy loss.
@@ -251,12 +255,17 @@ def main(_):
   train_paths = get_paths('training', train_subsets)
   dev_paths = get_paths('dev', dev_subsets)
 
+  # Construct config object.
+  cfg = get_default_config()
+
   special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
   vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))
+  glove_embeddings = GloVeEmbeddings(cfg.CONCEPT_IDENTIFICATION.LSTM_BASED, UNK, [PAD, EOS, UNK]) \
+    if FLAGS.use_glove else None
   train_dataset = AMRDataset(
-    train_paths, vocabs, device, seq2seq_setting=True, ordered=True)
+    train_paths, vocabs, device, seq2seq_setting=True, ordered=True, glove=glove_embeddings)
   dev_dataset = AMRDataset(
-    dev_paths, vocabs, device, seq2seq_setting=True, ordered=True)
+    dev_paths, vocabs, device, seq2seq_setting=True, ordered=True, glove=glove_embeddings)
   max_out_len = train_dataset.max_concepts_length
 
   train_data_loader = DataLoader(
@@ -266,8 +275,6 @@ def main(_):
     dev_dataset, batch_size=FLAGS.dev_batch_size,
     collate_fn=dev_dataset.collate_fn)
 
-  # Construct config object.
-  cfg = get_default_config()
   if FLAGS.config:
     config_file_name = FLAGS.config
     config_path = os.path.join('configs', config_file_name)
@@ -278,6 +285,7 @@ def main(_):
     vocabs.token_vocab_size,
     vocabs.concept_vocab_size,
     cfg.CONCEPT_IDENTIFICATION.LSTM_BASED,
+    glove_embeddings.embeddings_vocab if FLAGS.use_glove else None,
     device=device).to(device)
   optimizer = optim.Adam(model.parameters())
   criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)

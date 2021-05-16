@@ -4,3 +4,5 @@ torch
 tensorboard
 smatch
 yacs
+matplotlib
+bcolz

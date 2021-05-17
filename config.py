@@ -31,10 +31,12 @@ _C.HEAD_SELECTION.NUM_LAYERS = 1
 _C.HEAD_SELECTION.DENSE_MLP_HIDDEN_SIZE = 30
 # Edge threshold.
 _C.HEAD_SELECTION.EDGE_THRESHOLD = 0.5
-# Sampling ratio
-_C.HEAD_SELECTION.SAMPLING_RATIO = 1
-# Logging start epoch
-_C.HEAD_SELECTION.LOGGING_START_EPOCH = 5
+# Sampling ratio.
+_C.HEAD_SELECTION.SAMPLING_RATIO = 4
+# Logging start epoch for training flow.
+_C.HEAD_SELECTION.LOGGING_START_EPOCH_TRAIN = 30
+# Logging start epoch for evaluation flow.
+_C.HEAD_SELECTION.LOGGING_START_EPOCH_DEV = 20
 
 
 def get_default_config():

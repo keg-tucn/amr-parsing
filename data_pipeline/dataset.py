@@ -227,7 +227,6 @@ class AMRDataset(Dataset):
       new_batch = {
         AMR_ID_KEY: amr_ids,
         CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts),0,1),
-        CONCEPTS_STR_KEY: padded_concepts_string,
         # This is left on the cpu for 'pack_padded_sequence'.
         CONCEPTS_LEN_KEY: torch.tensor(concepts_lengths),
         ADJ_MAT_KEY: torch.stack(padded_adj_mats),

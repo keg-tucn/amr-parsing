@@ -32,15 +32,15 @@ flags.DEFINE_string('dev_subsets',
                     default=None,
                     help=('Train subsets split by comma. Ex: bolt,proxy'))
 flags.DEFINE_integer('batch_size',
-                     default=32,
+                     default=64,
                      short_name='b',
                      help=('Batch size.'))
 flags.DEFINE_integer('dev_batch_size',
-                     default=32,
+                     default=64,
                      help=('Dev batch size.'))
 flags.DEFINE_integer('no_epochs',
                      short_name='e',
-                     default=20,
+                     default=80,
                      help=('Number of epochs.'))
 
 
@@ -163,7 +163,7 @@ def eval_step(model: nn.Module,
               max_out_len: int,
               vocabs: Vocabs,
               batch: Dict[str, torch.tensor],
-              config: CfgNode):
+              config: CfgNode, device):
 
     inputs = batch['sentence']
     inputs_lengths = batch['sentence_lengts']
@@ -191,7 +191,7 @@ def eval_step(model: nn.Module,
         gold_outputs = torch.transpose(torch.as_tensor([[extended_vocab[word]
                                                          if word in extended_vocab.keys()
                                                          else extended_vocab[UNK] for word in sentence]
-                                                        for sentence in unnumericalized_concepts]),0,1)
+                                                        for sentence in unnumericalized_concepts]),0,1).to(device)
 
         logits, predictions = model(inputs, inputs_lengths,
                                 extended_vocab_size, torch.as_tensor(indices),
@@ -215,14 +215,15 @@ def evaluate_model(model: nn.Module,
                    max_out_len: int,
                    vocabs: Vocabs,
                    data_loader: DataLoader,
-                   config: CfgNode):
+                   config: CfgNode,
+                   device):
     model.eval()
     with torch.no_grad():
         epoch_f_score = 0
         epoch_loss = 0
         no_batches = 0
         for batch in data_loader:
-            f_score_epoch, loss = eval_step(model, criterion, max_out_len, vocabs, batch, config)
+            f_score_epoch, loss = eval_step(model, criterion, max_out_len, vocabs, batch, config, device)
             epoch_f_score += f_score_epoch
             epoch_loss += loss
             no_batches += 1
@@ -274,7 +275,8 @@ def train_model(model: nn.Module,
                 dev_data_loader: DataLoader,
                 train_writer: SummaryWriter,
                 eval_writer: SummaryWriter,
-                config: CfgNode):
+                config: CfgNode,
+                device):
     model.train()
     for epoch in range(no_epochs):
         start_time = time.time()
@@ -290,7 +292,7 @@ def train_model(model: nn.Module,
         epoch_loss = epoch_loss / no_batches
         batch_f_score_train = batch_f_score_train / no_batches
         fscore, dev_loss = evaluate_model(
-            model, criterion, max_out_len, vocabs, dev_data_loader, config)
+            model, criterion, max_out_len, vocabs, dev_data_loader, config, device)
         model.train()
         end_time = time.time()
         time_passed = end_time - start_time
@@ -319,12 +321,13 @@ def main(_):
     concept_identification_config = cfg.CONCEPT_IDENTIFICATION.LSTM_BASED
 
     if FLAGS.train_subsets is None:
-        train_subsets = ['cctv']
+        train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
+                      'mt09sdl', 'proxy', 'wb', 'xinhua']
     else:
         # Take subsets from flag passed.
         train_subsets = FLAGS.train_subsets.split(',')
     if FLAGS.dev_subsets is None:
-        dev_subsets = ['bolt']
+        dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
     else:
         # Take subsets from flag passed.
         dev_subsets = FLAGS.dev_subsets.split(',')
@@ -363,7 +366,7 @@ def main(_):
         output_vocab_size,
         concept_identification_config,
         device=device).to(device)
-    optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+    optimizer = optim.Adam(model.parameters())
     criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
 
     # Use --logdir temp/heads_selection for tensorboard dev upload
@@ -374,9 +377,9 @@ def main(_):
     eval_writer = SummaryWriter(tensorboard_dir + "/eval")
     train_model(
         model, criterion, optimizer, FLAGS.no_epochs,
-        10, vocabs,
+        max_out_len, vocabs,
         train_data_loader, dev_data_loader,
-        train_writer, eval_writer, concept_identification_config)
+        train_writer, eval_writer, concept_identification_config, device)
     train_writer.close()
     eval_writer.close()
 

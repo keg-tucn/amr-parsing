@@ -142,7 +142,8 @@ class DecoderStep(nn.Module):
               attention_mask: torch.Tensor,
               indecies: torch.Tensor,
               extended_vocab_size: int,
-              batch_size: int):
+              batch_size: int,
+              device):
     """
     Args:
       input: Decoder input (previous prediction or gold label), with shape
@@ -184,10 +185,10 @@ class DecoderStep(nn.Module):
     if self.use_pointer_generator:
       p_gen_input = torch.cat((context_vector, decoder_state[0], lstm_input), 1)
       p_gen = self.p_gen_linear(p_gen_input)
-      p_gen = torch.sigmoid(p_gen)
+      p_gen = torch.sigmoid(p_gen).to(device=device)
 
       # create the extended vocabulary probabilities
-      extended_vocab_probabilities = torch.zeros((batch_size, extended_vocab_size))
+      extended_vocab_probabilities = torch.zeros((batch_size, extended_vocab_size)).to(device=device)
       output_vocab_size = predictions.shape[1]
       extended_vocab_probabilities[:, :output_vocab_size] = p_gen * predictions
       extended_vocab_probabilities = extended_vocab_probabilities.scatter_add(1, indecies, (1 - p_gen) * attention)
@@ -281,7 +282,7 @@ class Decoder(nn.Module):
     all_predictions = torch.zeros((output_seq_len, batch_size))
     for i in range(output_seq_len):
       decoder_state, logits = self.decoder_step(
-        previous_token, decoder_state, encoder_states, attention_mask, indices, extended_vocab_size, batch_size)
+        previous_token, decoder_state, encoder_states, attention_mask, indices, extended_vocab_size, batch_size, self.device)
       # Get predicted token.
       step_predictions = torch.softmax(logits, dim=-1)
       predicted_token = torch.argmax(step_predictions, dim=-1)
@@ -339,6 +340,7 @@ class Seq2seq(nn.Module):
     encoder_output = self.encoder(input_sequence, input_lengths)
     input_seq_len = input_sequence.shape[0]
     attention_mask = self.create_mask(input_lengths, input_seq_len)
+    indices = indices.to(device=self.device)
     if self.training:
       logits, predictions = self.decoder(
         encoder_output, attention_mask, extended_vocab_size, indices, gold_output_sequence)

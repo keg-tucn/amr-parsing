@@ -12,6 +12,7 @@ from penman.surface import AlignmentMarker
 from data_pipeline.training_entry import TrainingEntry
 from data_pipeline.data_reading import extract_triples, get_paths
 from data_pipeline.vocab import Vocabs
+from data_pipeline.glove_embeddings import GloVeEmbeddings
 
 PAD = '<pad>' 
 UNK = '<unk>'
@@ -24,6 +25,7 @@ SENTENCE_STR_KEY = 'initial_sentence'
 SENTENCE_LEN_KEY = 'sentence_lengts'
 CONCEPTS_KEY = 'concepts'
 CONCEPTS_STR_KEY = 'concepts_string'
+GLOVE_CONCEPTS_KEY = 'glove_concepts'
 CONCEPTS_LEN_KEY = 'concepts_lengths'
 ADJ_MAT_KEY = 'adj_mat'
 AMR_STR_KEY = 'amr_str'
@@ -34,7 +36,8 @@ def add_eos(training_entry: TrainingEntry, eos_token: str):
 
 def numericalize(training_entry: TrainingEntry,
                  vocabs: Vocabs,
-                 use_shared: bool):
+                 use_shared: bool,
+                 glove_embeddings: GloVeEmbeddings):
   """
   Processes the train entry into lists of integeres that can be easily converted
   into tensors. For the adjacency matrix 0 will be used in case the relation
@@ -50,12 +53,15 @@ def numericalize(training_entry: TrainingEntry,
   processed_sentence = [vocabs.get_token_idx(t, use_shared) for t in training_entry.sentence]
   # Process concepts.
   processed_concepts = [vocabs.get_concept_idx(c, use_shared) for c in training_entry.concepts]
+  # Process glove concepts.
+  processed_glove_concepts = [glove_embeddings.get_glove_concept_idx(c) for c in training_entry.concepts] \
+    if glove_embeddings != None else []
   # Process adjacency matrix.
   processed_adj_mat = []
   for row in training_entry.adjacency_mat:
     processed_row = [0 if r is None else vocabs.get_relation_idx(r) for r in row]
     processed_adj_mat.append(processed_row)
-  return processed_sentence, processed_concepts, processed_adj_mat
+  return processed_sentence, processed_concepts, processed_glove_concepts, processed_adj_mat
 
 def remove_alignments(g: penman.Graph):
   """Creates a new penman graph AMR with no alignments. This is used if
@@ -92,7 +98,8 @@ class AMRDataset(Dataset):
                device: str, seq2seq_setting: bool,
                ordered: bool,
                use_shared: bool = False,
-               max_sen_len: bool = None):
+               max_sen_len: int = None,
+               glove: GloVeEmbeddings = None):
     super(AMRDataset, self).__init__()
     self.device = device
     self.seq2seq_setting = seq2seq_setting
@@ -117,7 +124,7 @@ class AMRDataset(Dataset):
         if self.seq2seq_setting:
           add_eos(training_entry, EOS)
         # Numericalize the training entry (str -> vocab ids).
-        sentence, concepts, adj_mat = numericalize(training_entry, vocabs, use_shared)
+        sentence, concepts, glove_concepts, adj_mat = numericalize(training_entry, vocabs, use_shared, glove)
         # Collect the data.
         self.ids.append(id)
         field = {
@@ -125,6 +132,7 @@ class AMRDataset(Dataset):
           SENTENCE_STR_KEY: training_entry.sentence,
           CONCEPTS_KEY: torch.tensor(concepts, dtype=torch.long),
           CONCEPTS_STR_KEY: training_entry.concepts,
+          GLOVE_CONCEPTS_KEY: torch.tensor(glove_concepts, dtype=torch.long),
           ADJ_MAT_KEY: torch.tensor(adj_mat, dtype=torch.long),
           AMR_STR_KEY: amr_str_no_align
         }
@@ -154,9 +162,10 @@ class AMRDataset(Dataset):
     sentence_str = self.fields_by_id[id][SENTENCE_STR_KEY]
     concepts = self.fields_by_id[id][CONCEPTS_KEY]
     concepts_str = self.fields_by_id[id][CONCEPTS_STR_KEY]
+    glove_concepts = self.fields_by_id[id][GLOVE_CONCEPTS_KEY]
     adj_mat = self.fields_by_id[id][ADJ_MAT_KEY]
     amr_str = self.fields_by_id[id][AMR_STR_KEY]
-    return id, sentence, sentence_str, concepts, concepts_str, adj_mat, amr_str
+    return id, sentence, sentence_str, concepts, concepts_str, glove_concepts, adj_mat, amr_str
 
   def collate_fn(self, batch):
     amr_ids = []
@@ -164,17 +173,19 @@ class AMRDataset(Dataset):
     batch_sentences_strings = []
     batch_concepts = []
     batch_concepts_strings = []
+    batch_glove_concepts = []
     batch_adj_mats = []
     amr_strings = []
     sentence_lengths = []
     concepts_lengths = []
     for entry in batch:
-      amr_id, sentence, sentence_str, concepts, concepts_str, adj_mat, amr_str = entry
+      amr_id, sentence, sentence_str, concepts, concepts_str, glove_concepts, adj_mat, amr_str = entry
       amr_ids.append(amr_id)
       batch_sentences.append(sentence)
       batch_sentences_strings.append(sentence_str)
       batch_concepts.append(concepts)
       batch_concepts_strings.append(concepts_str)
+      batch_glove_concepts.append(glove_concepts)
       batch_adj_mats.append(adj_mat)
       amr_strings.append(amr_str)
       sentence_lengths.append(len(sentence))
@@ -184,6 +195,7 @@ class AMRDataset(Dataset):
     max_sen_str_len = max([len(s) for s in batch_sentences_strings])
     max_concepts_len = max([len(s) for s in batch_concepts])
     max_concepts_str_len = max([len(s) for s in batch_concepts_strings])
+    max_glove_concepts_len = max([len(s) for s in batch_glove_concepts])
     max_adj_mat_size = max([len(s) for s in batch_adj_mats])
     # Pad sentences.
     padded_sentences = [
@@ -199,13 +211,16 @@ class AMRDataset(Dataset):
     # Pad concepts
     padded_concepts = [
       torch_pad(c, (0, max_concepts_len - len(c))) for c in batch_concepts]
-
     padded_concepts_string = []
     for concepts in batch_concepts_strings:
       padded_concept = copy.deepcopy(concepts)
       for i in range(max_concepts_str_len - len(concepts)):
         padded_concept.append(PAD)
       padded_concepts_string.append(padded_concept)
+
+    # Pad glove concepts
+    padded_glove_concepts = [
+      torch_pad(c, (0, max_glove_concepts_len - len(c))) for c in batch_glove_concepts]
     # Pad adj matrices (pad on both dimensions).
     padded_adj_mats = []
     for adj_mat in batch_adj_mats:
@@ -227,6 +242,7 @@ class AMRDataset(Dataset):
       new_batch = {
         AMR_ID_KEY: amr_ids,
         CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts),0,1),
+        GLOVE_CONCEPTS_KEY: torch.transpose(torch.stack(padded_glove_concepts),0,1),
         # This is left on the cpu for 'pack_padded_sequence'.
         CONCEPTS_LEN_KEY: torch.tensor(concepts_lengths),
         ADJ_MAT_KEY: torch.stack(padded_adj_mats),
@@ -261,8 +277,4 @@ if __name__ == "__main__":
     print(batch[AMR_ID_KEY])
     print('Amrs')
     print(batch[AMR_STR_KEY])
-    print('Concepts')
     print(batch[CONCEPTS_KEY].shape)
-    print(batch[CONCEPTS_KEY])
-    print('Concepts string')
-    print(batch[CONCEPTS_STR_KEY])

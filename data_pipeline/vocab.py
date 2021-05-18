@@ -8,7 +8,7 @@ import penman
 from penman.models import noop
 
 import definitions
-from data_pipeline.data_reading import extract_triples, get_paths
+from data_pipeline.data_reading import extract_triples
 from data_pipeline.training_entry import TrainingEntry
 
 VOCAB_PATH = 'temp/vocabs'
@@ -107,22 +107,22 @@ class Vocabs():
 
   def __init__(self,
                paths: List[str],
-               unkown_special_word: str,
+               unknown_special_word: str,
                special_words: Tuple[List[str], List[str], List[str]],
                min_frequencies: Tuple[int, int, int]):
     """
     Args:
       paths: Amr data file paths.
-      unkown_special_word: Unknown special word.
+      unknown_special_word: Unknown special word.
       special_words: Tuple of special words (for sentence tokens, for concepts
         and for relations). Each list contains special words like PAD or UNK
-        (these are addded at the begining of the vocab, with PAD usually at
+        (these are added at the beginning of the vocab, with PAD usually at
         index 0).
       min_frequencies: Tuple of min frequencies for tokens, concepts and
         relations. If the words have a frequency < than the given frequency,
         they are not added to the vocab.
     """
-    self.unkown_special_word = unkown_special_word
+    self.unknown_special_word = unknown_special_word
     token_vocab, concept_vocab, relation_vocab = build_vocabs(
       paths, special_words, min_frequencies)
     self.token_vocab = token_vocab
@@ -134,6 +134,7 @@ class Vocabs():
     self.shared_vocab_size = len(self.shared_vocab.keys())
     self.relation_vocab_size = len(relation_vocab.keys())
 
+<<<<<<< HEAD
   def create_shared_vocab(self):
     """
     This method creates the shared vocabulary between input and output.
@@ -166,8 +167,19 @@ class Vocabs():
     if concept in vocab.keys():
       return vocab[concept]
     return vocab[self.unkown_special_word]
+=======
+  def get_token_idx(self, token: str):
+    if token in self.token_vocab.keys():
+      return self.token_vocab[token]
+    return self.token_vocab[self.unknown_special_word]
+
+  def get_concept_idx(self, concept: str):
+    if concept in self.concept_vocab.keys():
+      return self.concept_vocab[concept]
+    return self.concept_vocab[self.unknown_special_word]
+>>>>>>> origin/main
 
   def get_relation_idx(self, relation: str):
     if relation in self.relation_vocab.keys():
       return self.relation_vocab[relation]
-    return self.relation_vocab[self.unkown_special_word]
+    return self.relation_vocab[self.unknown_special_word]

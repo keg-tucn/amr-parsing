@@ -1,7 +1,7 @@
 import torch
 from absl.testing import absltest
 
-from train_concept_identification import compute_fScore
+from train.train import compute_fScore
 
 
 class TrainConceptIdentificationTest(absltest.TestCase):

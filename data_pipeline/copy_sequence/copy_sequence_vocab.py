@@ -25,12 +25,17 @@ class CopySequenceVocab():
         """
         Args:
         """
-        token_vocab = build_vocab(concepts, special_words, min_frequency)
         self.unkown_special_word = unkown_special_word
-        self.token_vocab = token_vocab
-        self.token_vocab_size = len(token_vocab.keys())
+        self.token_vocab = build_vocab(concepts, special_words, min_frequency)
+        self.token_vocab_size = len(self.token_vocab.keys())
 
     def get_token_idx(self, token: str):
         if token in self.token_vocab.keys():
             return self.token_vocab[token]
         return self.token_vocab[self.unkown_special_word]
+
+    def get_word_by_token_idx(self, idx: str):
+        values = list(self.token_vocab.values())
+        keys = list(self.token_vocab.keys())
+        if idx in values:
+            return keys[values.index(idx)]

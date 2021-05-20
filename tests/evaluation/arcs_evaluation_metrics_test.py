@@ -2,7 +2,7 @@ from absl.testing import absltest
 import torch
 
 from evaluation.arcs_evaluation_metrics import unpad_mat_to_list, \
-    compute_accuracy, compute_f_score, compute_smatch, SmatchScore
+    compute_accuracy, compute_f_score, compute_smatch, SmatchScore, compute_multiclass_f_score
 
 
 class TensorsToAmrTest(absltest.TestCase):
@@ -92,3 +92,31 @@ class TensorsToAmrTest(absltest.TestCase):
         self.assertEqual(1.0, smatch[SmatchScore.PRECISION])
         self.assertEqual(0.67, smatch[SmatchScore.RECALL].__round__(2))
         self.assertEqual(0.8, smatch[SmatchScore.F_SCORE])
+
+    def test_compute_multiclass_f_score(self):
+        gold = torch.tensor([[
+            [0, 0, 2, 0],
+            [3, 0, 1, 0],
+            [4, 0, 0, 0],
+            [0, 0, 0, 0]
+        ]])
+
+        pred = torch.tensor([[
+            [0, 2, 0, 0],
+            [0, 0, 1, 0],
+            [4, 0, 2, 0],
+            [0, 0, 0, 0]
+        ]])
+
+        rel_dict = {
+            'pad': 0,
+            'ARG0': 1,
+            'ARG1': 2,
+            'neg': 3,
+            'no-rel': 4,
+        }
+
+        f_score, precision, recall = compute_multiclass_f_score(gold, pred, rel_dict, len(rel_dict.keys()))
+        self.assertEqual(0.57, f_score.__round__(2))
+        self.assertEqual(0.57, precision.__round__(2))
+        self.assertEqual(0.57, recall.__round__(2))

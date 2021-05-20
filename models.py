@@ -15,16 +15,6 @@ class Encoder(nn.Module):
   def __init__(self, input_vocab_size, config: CfgNode, use_bilstm=False, glove_embeddings: Dict=None):
     super(Encoder, self).__init__()
     self.embedding = nn.Embedding(input_vocab_size, config.EMB_DIM)
-<<<<<<< HEAD
-    if self.training:
-      self.lstm = nn.LSTM(
-        config.EMB_DIM, config.HIDDEN_SIZE, config.NUM_LAYERS, dropout=config.DROPOUT_RATE, bidirectional=use_bilstm)
-    else:
-      self.lstm = nn.LSTM(
-        config.EMB_DIM, config.HIDDEN_SIZE, config.NUM_LAYERS,
-        bidirectional=use_bilstm)
-
-=======
     self.use_glove = config.GLOVE_EMB_DIM != 0 and glove_embeddings is not None
 
     if self.use_glove:
@@ -33,8 +23,9 @@ class Encoder(nn.Module):
       self.glove.load_state_dict({'weight': weight_matrix})
       self.glove.weight.requires_grad = False
     emb_dim = config.EMB_DIM + config.GLOVE_EMB_DIM if self.use_glove else config.EMB_DIM
-    self.lstm = nn.LSTM(emb_dim, config.HIDDEN_SIZE, config.NUM_LAYERS, bidirectional=use_bilstm)
->>>>>>> origin/main
+    self.lstm = nn.LSTM(
+      emb_dim, config.HIDDEN_SIZE, config.NUM_LAYERS,
+      bidirectional=use_bilstm)
 
   def forward(self, inputs: torch.Tensor, input_lengths: torch.Tensor):
     """
@@ -120,8 +111,6 @@ class DecoderClassifier(nn.Module):
     # decoder state - HIDDEN_SIZE and context vector - HIDDEN_SIZE.
     self.linear_layer = nn.Linear(
       config.EMB_DIM + 2 * config.HIDDEN_SIZE, output_vocab_size)
-    # self.linear_layer = nn.Linear(
-    #   config.HIDDEN_SIZE, output_vocab_size)
 
   def forward(self, classifier_input):
     logits = self.linear_layer(classifier_input)
@@ -192,9 +181,7 @@ class DecoderStep(nn.Module):
     # before with a NN layer).
 
     classifier_input = torch.cat(
-            (previous_embedding, decoder_state[0], context_vector), dim=-1)
-
-    # classifier_input = decoder_state[0]
+      (previous_embedding, decoder_state[0], context_vector), dim=-1)
     predictions = self.classifier(classifier_input)
 
     # generation probability
@@ -247,8 +234,6 @@ class Decoder(nn.Module):
     enc_c = last_encoder_states[1][-1]
     initial_h = self.initial_state_layer_h(enc_h)
     initial_c = self.initial_state_layer_h(enc_c)
-    # initial_h[torch.tensor!=0] = 0
-    # initial_c[torch.tensor!=0] = 0
     return (initial_h, initial_c)
 
 
@@ -287,7 +272,6 @@ class Decoder(nn.Module):
     # Create a batch of initial tokens.
     previous_token = torch.full((batch_size,), BOS_IDX).to(device=self.device)
 
-
     if self.config.USE_POINTER_GENERATION:
       all_logits_vocab_size = extended_vocab_size
     else:
@@ -321,17 +305,10 @@ class Seq2seq(nn.Module):
                output_vocab_size: int,
                # config CONCEPT_IDENTIFICATION.LSTM_BASED
                config: CfgNode,
-<<<<<<< HEAD
-               device="cpu"):
-    super(Seq2seq, self).__init__()
-    self.encoder = Encoder(input_vocab_size, config)
-=======
                glove_embeddings: Dict = None,
                device="cpu"):
     super(Seq2seq, self).__init__()
-    hidden_size = config.HIDDEN_SIZE
     self.encoder = Encoder(input_vocab_size, config, glove_embeddings=glove_embeddings)
->>>>>>> origin/main
     self.decoder = Decoder(output_vocab_size, config, device=device)
     self.device = device
     if config.USE_POINTER_GENERATION:
@@ -364,7 +341,7 @@ class Seq2seq(nn.Module):
     encoder_output, _ = self.encoder(input_sequence, input_lengths)
     input_seq_len = input_sequence.shape[0]
     attention_mask = self.create_mask(input_lengths, input_seq_len)
-    indices = indices.to(device=self.device)
+    indices = indices.to(device=self.device) if indices is not None else None
     if self.training:
       logits, predictions = self.decoder(
         encoder_output, attention_mask, extended_vocab_size, indices, gold_output_sequence)

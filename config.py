@@ -33,6 +33,10 @@ _C.HEAD_SELECTION.DENSE_MLP_HIDDEN_SIZE = 30
 _C.HEAD_SELECTION.EDGE_THRESHOLD = 0.5
 # Sampling ratio.
 _C.HEAD_SELECTION.SAMPLING_RATIO = 4
+# Positive class weight
+_C.HEAD_SELECTION.POSITIVE_CLASS_WEIGHT = 0.7
+# Negative class weight
+_C.HEAD_SELECTION.NEGATIVE_CLASS_WEIGHT = 1.0
 # Logging start epoch for training flow.
 _C.HEAD_SELECTION.LOGGING_START_EPOCH_TRAIN = 30
 # Logging start epoch for evaluation flow.

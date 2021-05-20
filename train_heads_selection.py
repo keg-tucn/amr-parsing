@@ -78,11 +78,13 @@ def get_gold_data(batch: torch.tensor):
 def compute_loss(vocabs: Vocabs,
                  logits: torch.Tensor,
                  gold_outputs: torch.Tensor,
+                 config: CfgNode,
                  mask: torch.Tensor):
   """
   Args:
     vocabs: Vocabs object (with the 3 vocabs).
     mask: Mask for weighting the loss.
+    config: configuration file
     logits: Concepts edges scores (batch size, seq len, seq len).
     gold_outputs: Gold adj mat (with relation labels) of shape
       (batch size, seq len, seq len).
@@ -94,7 +96,9 @@ def compute_loss(vocabs: Vocabs,
   pad_idx = vocabs.relation_vocab[PAD]
   binary_outputs = (gold_outputs != no_rel_index) * (gold_outputs != pad_idx)
   binary_outputs = binary_outputs.type(torch.FloatTensor)
-  weights = mask.type(torch.FloatTensor)
+  data_selection_weights = mask.type(torch.FloatTensor)
+  class_weights = torch.where(binary_outputs == 1.0, config.POSITIVE_CLASS_WEIGHT, config.NEGATIVE_CLASS_WEIGHT)
+  weights = class_weights * data_selection_weights
   flattened_logits = logits.flatten()
   flattened_binary_outputs = binary_outputs.flatten()
   flattened_weights = weights.flatten()
@@ -171,7 +175,7 @@ def eval_step(model: nn.Module,
   gather_logged_data(eval_logger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str)
   f_score, precision, recall, accuracy = calc_edges_scores(gold_adj_mat, predictions, inputs_lengths)
 
-  loss = compute_loss(vocabs, logits, gold_adj_mat_device, mask)
+  loss = compute_loss(vocabs, logits, gold_adj_mat_device, config, mask)
 
   # Remove the edge labels for the gold AMRs before doing the smatch.
   smatch_score = initialize_smatch()
@@ -244,7 +248,7 @@ def train_step(model: nn.Module,
   gather_logged_data(train_logger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str)
 
   f_score, precision, recall, accuracy = calc_edges_scores(gold_adj_mat, predictions, inputs_lengths)
-  loss = compute_loss(vocabs, logits, gold_adj_mat_device, mask)
+  loss = compute_loss(vocabs, logits, gold_adj_mat_device, config, mask)
   loss.backward()
   optimizer.step()
 
@@ -309,10 +313,16 @@ def train_model(model: nn.Module,
     write_res_to_tensorboard(eval_logger, epoch, dev_loss, smatch, logged_text,
                              f_score, precision, recall, accuracy)
     print('Epoch {} (took {:.2f} seconds)'.format(epoch, time_passed))
-    print('TRAIN loss: {}, accuracy: {}, f_score: {}, precision: {}, recall: {}, smatch: {}'.format(
-      epoch_loss, train_accuracy, train_f_score, train_precision, train_recall, train_smatch[SmatchScore.F_SCORE]))
-    print('DEV loss: {}, accuracy: {}, f_score: {}, precision: {}, recall: {}, smatch: {}'.format(
-      dev_loss, accuracy, f_score, precision, recall, smatch[SmatchScore.F_SCORE]))
+    print('TRAIN loss: {}, accuracy: {}%, f_score: {}%, precision: {}%, recall: {}%, smatch: {}%'.format(
+      epoch_loss, round_res(train_accuracy), round_res(train_f_score), round_res(train_precision),
+      round_res(train_recall), round_res(train_smatch[SmatchScore.F_SCORE])))
+    print('DEV   loss: {}, accuracy: {}%, f_score: {}%, precision: {}%, recall: {}%, smatch: {}%'.format(
+      dev_loss, round_res(accuracy), round_res(f_score), round_res(precision),
+      round_res(recall), round_res(smatch[SmatchScore.F_SCORE])))
+
+def round_res(result: float):
+  result = result * 100
+  return result.__round__(2)
 
 def write_res_to_tensorboard(logger: DataLogger, epoch_no, loss, smatch, text, f_score, precision, recall, accuracy):
   logger.set_epoch(epoch_no)

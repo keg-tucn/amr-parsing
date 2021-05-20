@@ -2,7 +2,7 @@ from absl.testing import absltest
 import torch
 
 from models import Encoder, AdditiveAttention, DecoderStep, Decoder, Seq2seq
-from models import DenseMLP, EdgeScoring, HeadsSelection
+from models import DenseMLP, EdgeScoring, RelationIdentification
 from config import get_default_config
 
 class ModelsTest(absltest.TestCase):
@@ -258,7 +258,7 @@ class ModelsTest(absltest.TestCase):
     concepts = torch.tensor(concepts)
     concepts = concepts.transpose(0,1)
     concepts_lengths = torch.tensor([3, 2])
-    head_selection = HeadsSelection(concept_vocab_size, cfg.HEAD_SELECTION)
+    head_selection = RelationIdentification(concept_vocab_size, cfg.HEAD_SELECTION)
     head_selection.eval()
     scores, predictions = head_selection(concepts, concepts_lengths)
     self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
@@ -282,7 +282,7 @@ class ModelsTest(absltest.TestCase):
                              [0, 1, 1]]]
     expected_predictions = torch.tensor(expected_predictions)
 
-    predictions = HeadsSelection.get_predictions(scores, 0.5)
+    predictions = RelationIdentification.get_predictions(scores, 0.5)
     self.assertTrue(torch.equal(expected_predictions, predictions))
 
   def test_heads_selection_train(self):
@@ -299,7 +299,7 @@ class ModelsTest(absltest.TestCase):
     concepts = torch.tensor(concepts)
     concepts = concepts.transpose(0,1)
     concepts_lengths = torch.tensor([3, 2])
-    head_selection = HeadsSelection(concept_vocab_size, cfg.HEAD_SELECTION)
+    head_selection = RelationIdentification(concept_vocab_size, cfg.HEAD_SELECTION)
     head_selection.train()
     scores, predictions = head_selection(concepts, concepts_lengths)
     self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))

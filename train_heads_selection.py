@@ -107,10 +107,19 @@ def compute_loss(vocabs: Vocabs,
   return loss
 
 def replace_all_edge_labels(amr_str: str, new_edge_label: str):
-  """Replaces all edge labels in an AMR with a given edge and returns the
-  new AMR.
   """
-  new_amr_str = re.sub(r':[a-zA-Z0-9~.]+', new_edge_label, amr_str)
+  Replaces all edge labels in an AMR with a given edge and
+    returns the new AMR.
+  """
+  new_amr_str = re.sub(r':[a-zA-Z0-9~.-]+', new_edge_label, amr_str)
+  return new_amr_str
+
+def remove_order_of_words(amr_str: str):
+  """
+    Replaces all word orders from the concepts so that the smatch will be
+      more focused on predicting the concepts and relations between them.
+  """
+  new_amr_str = re.sub(r'~e.[0-9,]+', '', amr_str)
   return new_amr_str
 
 def gather_logged_data(logger: DataLogger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str):
@@ -129,6 +138,7 @@ def gather_logged_data(logger: DataLogger, inputs_lengths, logits, mask, gold_ad
 
 def compute_results(gold_amr_str, inputs, inputs_lengths, predictions, vocabs, logger: DataLogger):
   gold_outputs = [replace_all_edge_labels(a, UNK_REL_LABEL) for a in gold_amr_str]
+  gold_outputs = [remove_order_of_words(a) for a in gold_outputs]
   predictions_strings = get_unlabelled_amr_strings_from_tensors(
     inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
 

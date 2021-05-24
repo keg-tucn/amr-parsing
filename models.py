@@ -321,15 +321,13 @@ class DenseMLP(nn.Module):
                no_labels: int,
                config: CfgNode):
     super(DenseMLP, self).__init__()
-    self.Ua = nn.Linear(node_repr_size, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
-    self.Wa = nn.Linear(node_repr_size, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
     self.va = nn.Linear(config.DENSE_MLP_HIDDEN_SIZE, 1, bias=False)
     self.label_classifier = nn.Linear(config.DENSE_MLP_HIDDEN_SIZE, no_labels, bias=False)
     self.heads_selection = config.HEADS_SELECTION
     self.arcs_labelling = config.ARCS_LABELLING
 
 
-  def forward(self, parent: torch.Tensor, child: torch.Tensor):
+  def forward(self, classifier_input):
     """
     Args:
         parent: Parent node representation (batch size, node repr size).
@@ -337,11 +335,10 @@ class DenseMLP(nn.Module):
     Returns
       edge_score: (batch size).
     """
-    classifier_input = torch.tanh(self.Ua(parent) + self.Wa(child))
     edge_score = self.va(classifier_input) if self.heads_selection else torch.tensor([[0.0]])
     label_score = self.label_classifier(classifier_input) if self.arcs_labelling else torch.tensor([[0.0]])
     # Return score of (batch size), not (batch size, 1).
-    return edge_score[:,0], label_score
+    return edge_score.squeeze(-1), label_score
 
 class EdgeScoring(nn.Module):
 
@@ -349,6 +346,8 @@ class EdgeScoring(nn.Module):
     super(EdgeScoring, self).__init__()
     self.dense_mlp = DenseMLP(2 * config.HIDDEN_SIZE, no_labels, config)
     self.no_labels = no_labels
+    self.Ua = nn.Linear(2 * config.HIDDEN_SIZE, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
+    self.Wa = nn.Linear(2 * config.HIDDEN_SIZE, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
 
   def forward(self, concepts: torch.tensor):
     """
@@ -361,17 +360,16 @@ class EdgeScoring(nn.Module):
       (batch size, no of concepts, no of concepts).
     """
     batch_size, no_of_concepts, _ = concepts.shape
-    scores = torch.zeros((batch_size, no_of_concepts, no_of_concepts))
-    label_scores = torch.zeros((batch_size, no_of_concepts, no_of_concepts, self.no_labels))
-    no_concepts = concepts.shape[1]
-    #TODO: think if this can be done without loops.
-    for i in range(no_concepts):
-      for j in range(no_concepts):
-        parent = concepts[:,i]
-        child = concepts[:,j]
-        score, label_score = self.dense_mlp(parent, child)
-        scores[:,i,j] = score
-        label_scores[:,i,j] = label_score
+    parent_representations = self.Ua(concepts)
+    child_representations = self.Wa(concepts)
+
+    parent_mat = torch.repeat_interleave(parent_representations.unsqueeze(2), no_of_concepts, dim=-2)
+    child_mat = torch.repeat_interleave(child_representations.unsqueeze(2), no_of_concepts, dim=-2)
+    child_mat = torch.transpose(child_mat, -2, -3)
+
+    classifier_input = torch.tanh(parent_mat + child_mat)
+    scores, label_scores = self.dense_mlp(classifier_input)
+
     return scores, label_scores
 
 class RelationIdentification(nn.Module):

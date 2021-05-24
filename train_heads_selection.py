@@ -367,8 +367,8 @@ def train_model(model: nn.Module,
     print('DEV   loss: {}, accuracy: {}%, f_score: {}%, precision: {}%, recall: {}%, smatch: {}%'.format(
       dev_loss, round_res(accuracy), round_res(f_score), round_res(precision),
       round_res(recall), round_res(smatch[SmatchScore.F_SCORE])))
-    print('LABEL f_score: {}, precision: {}, recall: {}'.format(
-      rel_f_score, rel_precision, rel_recall))
+    print('LABEL f_score: {}%, precision: {}%, recall: {}%'.format(
+      round_res(rel_f_score), round_res(rel_precision), round_res(rel_recall)))
 
 def round_res(result: float):
   result = result * 100

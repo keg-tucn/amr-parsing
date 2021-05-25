@@ -196,15 +196,14 @@ class ModelsTest(absltest.TestCase):
     output_seq_len = 5
     input_vocab_size = 10
     output_vocab_size = 20
-    config: CfgNode
-    config = get_default_config();
+    cfg = get_default_config()
     opts = ["CONCEPT_IDENTIFICATION.LSTM_BASED.HIDDEN_SIZE", 15,
             "CONCEPT_IDENTIFICATION.LSTM_BASED.EMB_DIM", 50]
-    config.merge_from_list(opts)
+    cfg.merge_from_list(opts)
     inputs = torch.zeros((input_seq_len, batch_size)).type(torch.LongTensor)
     input_lengths = torch.tensor([2, 4, 1])
     gold_outputs = torch.zeros((output_seq_len, batch_size)).type(torch.LongTensor)
-    seq2seq_model = Seq2seq(input_vocab_size, output_vocab_size, config.CONCEPT_IDENTIFICATION.LSTM_BASED)
+    seq2seq_model = Seq2seq(input_vocab_size, output_vocab_size, cfg.CONCEPT_IDENTIFICATION.LSTM_BASED)
     seq2seq_model.train()
     logits, predictions = seq2seq_model(inputs, input_lengths, gold_outputs)
     self.assertEqual(logits.shape,

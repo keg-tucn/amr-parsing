@@ -153,8 +153,13 @@ def extract_padding(outputs, eos_index):
 def indices_to_words(outputs_no_padding,
                      extended_vocab,
                      config: CfgNode):
-    # TODO put config and use concept_vocab if not pointer generator
-  ids_to_concepts_list = list(extended_vocab.keys())
+
+  if config.USE_POINTER_GENERATOR:
+    vocab = extended_vocab
+  else:
+    vocab = extended_vocab.concept_vocab
+
+  ids_to_concepts_list = list(vocab.keys())
   concepts_as_list = []
   for sentence in outputs_no_padding:
     concepts = []
@@ -174,7 +179,7 @@ def eval_step(model: nn.Module,
   inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts']
 
-  if config.USE_POINTER_GENERATION:
+  if config.USE_POINTER_GENERATOR:
     unnumericalized_inputs = batch['initial_sentence']
     unnumericalized_concepts = batch['concepts_string']
     # compute extended vocab
@@ -247,14 +252,14 @@ def train_step(model: nn.Module,
   inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts']
 
-  if config.USE_POINTER_GENERATION:
+  if config.USE_POINTER_GENERATOR:
     # initial sentence (un-numericalized)
     unnumericalized_inputs = batch['initial_sentence']
     # compute indices
     indices = [[vocabs.shared_vocab[t] for t in sentence] for sentence in unnumericalized_inputs]
 
   optimizer.zero_grad()
-  if config.USE_POINTER_GENERATION:
+  if config.USE_POINTER_GENERATOR:
     logits, predictions = model(inputs, inputs_lengths,
                                     vocabs.shared_vocab_size, torch.as_tensor(indices),
                                     gold_outputs)
@@ -320,13 +325,12 @@ def main(_):
   concept_identification_config = cfg.CONCEPT_IDENTIFICATION.LSTM_BASED
 
   if FLAGS.train_subsets is None:
-    train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-                      'mt09sdl', 'proxy', 'wb', 'xinhua']
+    train_subsets = ['bolt']
   else:
     # Take subsets from flag passed.
     train_subsets = FLAGS.train_subsets.split(',')
   if FLAGS.dev_subsets is None:
-    dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+    dev_subsets = ['bolt']
   else:
     # Take subsets from flag passed.
     dev_subsets = FLAGS.dev_subsets.split(',')
@@ -339,7 +343,7 @@ def main(_):
   glove_embeddings = GloVeEmbeddings(concept_identification_config.GLOVE_EMB_DIM, UNK, [PAD, EOS, UNK]) \
   if FLAGS.use_glove else None
 
-  if concept_identification_config.USE_POINTER_GENERATION:
+  if concept_identification_config.USE_POINTER_GENERATOR:
     use_shared = True
     input_vocab_size = vocabs.shared_vocab_size
     output_vocab_size = vocabs.shared_vocab_size

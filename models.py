@@ -139,7 +139,7 @@ class DecoderStep(nn.Module):
     # Classifier input: previous embedding, decoder state, context vector.
     self.classifier = DecoderClassifier(output_vocab_size, config)
     self.drop_out = config.DROPOUT_RATE
-    self.use_pointer_generator = config.USE_POINTER_GENERATION
+    self.use_pointer_generator = config.USE_POINTER_GENERATOR
     if self.use_pointer_generator:
         self.p_gen_linear = nn.Linear(config.HIDDEN_SIZE * 3 + config.EMB_DIM, 1, bias=True)
     self.output_vocab_size = output_vocab_size
@@ -148,7 +148,7 @@ class DecoderStep(nn.Module):
               previous_state: Tuple[torch.Tensor, torch.Tensor],
               encoder_states: torch.Tensor,
               attention_mask: torch.Tensor,
-              indecies: torch.Tensor,
+              indices : torch.Tensor,
               extended_vocab_size: int,
               batch_size: int,
               device):
@@ -161,6 +161,10 @@ class DecoderStep(nn.Module):
       encoder_states: Encoder outputs with shape
         (input seq len, batch size, hidden size).
       attention_mask: Attention mask (batch size, input seq len).
+      indices: indices in the extended vocab.
+      extended_vocab_size: the size of the extended vocab.
+      batch_size: the batch size.
+      device: the device the model is running on.
     Returns:
        A tuple of:
          decoder state with shape (batch size, hidden size)
@@ -197,7 +201,7 @@ class DecoderStep(nn.Module):
       extended_vocab_probabilities = torch.zeros((batch_size, extended_vocab_size)).to(device=device)
       output_vocab_size = predictions.shape[1]
       extended_vocab_probabilities[:, :output_vocab_size] = p_gen * predictions
-      extended_vocab_probabilities = extended_vocab_probabilities.scatter_add(1, indecies, (1 - p_gen) * attention)
+      extended_vocab_probabilities = extended_vocab_probabilities.scatter_add(1, indices, (1 - p_gen) * attention)
 
       return decoder_state, extended_vocab_probabilities
     else:
@@ -256,11 +260,12 @@ class Decoder(nn.Module):
         (num_enc_layers, batch size, hidden size).
       attention_mask: Attention mask (tensor of bools), shape
         (batch size, input seq len).
+      indices: indices in the extended vocab.
       decoder_inputs (torch.Tensor): Decoder input for each step, with shape
         (output seq len, batch size). These should be sent on the train flow,
         and consist of the gold output sequence. On the inference flow, they
         should not be used (None by default).
-      max_output_length: Maximum output length (sent on the inference flow), for
+      max_out_length: Maximum output length (sent on the inference flow), for
         the sequences to have a fixed size in the batch. None by default.
     """
     if self.training:
@@ -275,7 +280,7 @@ class Decoder(nn.Module):
     # Create a batch of initial tokens.
     previous_token = torch.full((batch_size,), BOS_IDX).to(device=self.device)
 
-    if self.config.USE_POINTER_GENERATION:
+    if self.config.USE_POINTER_GENERATOR:
       all_logits_vocab_size = extended_vocab_size
     else:
       all_logits_vocab_size = self.output_vocab_size
@@ -314,7 +319,7 @@ class Seq2seq(nn.Module):
     self.encoder = Encoder(input_vocab_size, config, glove_embeddings=glove_embeddings)
     self.decoder = Decoder(output_vocab_size, config, device=device)
     self.device = device
-    if config.USE_POINTER_GENERATION:
+    if config.USE_POINTER_GENERATOR:
       self.encoder.embedding.weight = self.decoder.decoder_step.output_embedding.weight
 
 
@@ -337,11 +342,15 @@ class Seq2seq(nn.Module):
         input_sequence (torch.Tensor): Input sequence of shape
           (input seq len, batch size).
         input_lengths: Lengths of the sequences in the batch (batch size).
+        extended_vocab_size: the size of the extended vocab.
+        indices: indices in the extended vocab.
         gold_output_sequence: Output sequence (output seq len, batch size).
+        max_out_length: Maximum output length (sent on the inference flow), for
+        the sequences to have a fixed size in the batch. None by default.
     Returns:
       predictions of shape (out seq len, batch size, output no of classes).
     """
-    encoder_output, _ = self.encoder(input_sequence, input_lengths)
+    encoder_output = self.encoder(input_sequence, input_lengths)
     input_seq_len = input_sequence.shape[0]
     attention_mask = self.create_mask(input_lengths, input_seq_len)
     indices = indices.to(device=self.device) if indices is not None else None

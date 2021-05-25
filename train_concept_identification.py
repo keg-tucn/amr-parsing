@@ -325,12 +325,13 @@ def main(_):
   concept_identification_config = cfg.CONCEPT_IDENTIFICATION.LSTM_BASED
 
   if FLAGS.train_subsets is None:
-    train_subsets = ['bolt']
+    train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
+                      'mt09sdl', 'proxy', 'wb', 'xinhua']
   else:
     # Take subsets from flag passed.
     train_subsets = FLAGS.train_subsets.split(',')
   if FLAGS.dev_subsets is None:
-    dev_subsets = ['bolt']
+    dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
   else:
     # Take subsets from flag passed.
     dev_subsets = FLAGS.dev_subsets.split(',')

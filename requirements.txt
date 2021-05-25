@@ -5,4 +5,3 @@ tensorboard
 smatch
 yacs
 matplotlib
-bcolz

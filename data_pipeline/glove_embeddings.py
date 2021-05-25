@@ -4,11 +4,9 @@ from typing import List, Dict
 
 import definitions
 import numpy as np
-import bcolz
 import pickle
 
 GLOVE_DATA_FILE = 'glove.6B.50d.txt'
-GLOVE_VECTOR_FILE = '6B.50.dat'
 GLOVE_PATH = 'temp/glove'
 GLOVE_CACHE_FILE = 'glove.pickle'
 GLOVE_WORD_2_IDX_CACHE_FILE = 'word2idx.pickle'
@@ -73,15 +71,15 @@ class GloVeEmbeddings:
         words = []
         idx = 0
         word2idx = {}
-        vectors = bcolz.carray(np.zeros(1), rootdir=f'{path}/{GLOVE_VECTOR_FILE}', mode='w')
+        glove_embeddings = {}
 
         # Add special words first
         for word in special_words:
             words.append(word)
             word2idx[word] = idx
             idx += 1
-            vect = np.zeros(embeddings_dim)
-            vectors.append(vect)
+            embedding = np.zeros(embeddings_dim)
+            glove_embeddings[word] = embedding
 
         # Then add words from the file with their corresponding embeddings
         with open(f'{path}/{GLOVE_DATA_FILE}', 'rb') as file:
@@ -91,18 +89,14 @@ class GloVeEmbeddings:
                 words.append(word)
                 word2idx[word] = idx
                 idx += 1
-                vect = np.array(line[1:]).astype(np.float)
-                vectors.append(vect)
-
-        vectors = bcolz.carray(vectors[1:].reshape((idx, embeddings_dim)),
-                    rootdir=f'{path}/{GLOVE_VECTOR_FILE}', mode='w')
-        vectors.flush()
+                embedding = np.array(line[1:]).astype(np.float)
+                glove_embeddings[word] = embedding
 
         # Change embeddings value for unknown special word to the mean of all embeddings
-        vectors[word2idx[unknown_special_word]] = np.mean(vectors, axis=0)
+        glove_embeddings[unknown_special_word] = np.mean(np.array(list(glove_embeddings.values())), axis=0)
 
-        # Obtain the GloVe dictionary
-        glove = {word2idx[w]: vectors[word2idx[w]] for w in words}
+        # Obtain the GloVe dictionary with indexes
+        glove = {word2idx[w]: glove_embeddings[w] for w in words}
 
         cache_data(glove, word2idx)
         print('Created and cached data for GloVe Embeddings.')

@@ -98,7 +98,7 @@ def generate_amr_str_rec(root: int, seen_nodes: List[int], depth,
         else:
           # The child i was not already visited. It's marked as seen and it
           # becomes the root in the recursive call.
-          if depth < 50:
+          if depth < no_concepts:
             seen_nodes.append(i)
             rec_repr = generate_amr_str_rec(i, seen_nodes, depth+1,
                                             concepts, concepts_var, adj_mat,

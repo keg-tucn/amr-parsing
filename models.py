@@ -16,6 +16,7 @@ class Encoder(nn.Module):
     super(Encoder, self).__init__()
     self.embedding = nn.Embedding(input_vocab_size, config.EMB_DIM)
     self.use_glove = config.GLOVE_EMB_DIM != 0 and glove_embeddings is not None
+    self.use_trainable_embeddings = config.EMB_DIM != 0
 
     if self.use_glove:
       self.glove = nn.Embedding(len(glove_embeddings.keys()), config.GLOVE_EMB_DIM)
@@ -41,10 +42,12 @@ class Encoder(nn.Module):
       input_lengths field, regardless of what the length with padding actually
       is.
     """
-    embedded_inputs = self.embedding(inputs)
-    if self.use_glove:
+    embedded_inputs = self.embedding(inputs) if self.use_trainable_embeddings else None
+    if self.use_glove and self.use_trainable_embeddings:
       glove_embedded_inputs = self.glove(inputs)
       embedded_inputs = torch.cat((embedded_inputs, glove_embedded_inputs), dim=-1)
+    if self.use_glove and not self.use_trainable_embeddings:
+      embedded_inputs = self.glove(inputs)
     #TODO: see if enforce_sorted would help to be True (eg efficiency).
     packed_embedded = nn.utils.rnn.pack_padded_sequence(
       embedded_inputs, input_lengths, enforce_sorted = False)

@@ -1,7 +1,6 @@
 import os
 from typing import Dict
 import time
-from copy import deepcopy
 
 from absl import app
 from absl import flags
@@ -21,6 +20,7 @@ from data_pipeline.dataset import AMRDataset
 from config import get_default_config
 from models import Seq2seq
 from data_pipeline.glove_embeddings import GloVeEmbeddings
+from utils.extended_vocab_utils import construct_extended_vocabulary, numericalize_concepts
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('config',
@@ -44,7 +44,7 @@ flags.DEFINE_integer('no_epochs',
                      default=80,
                      help=('Number of epochs.'))
 flags.DEFINE_boolean('use_glove',
-                     default=False,
+                     default=True,
                      help=('Flag which tells whether model should use GloVe Embeddings or not.'))
 
 def compute_loss(criterion, logits, gold_outputs):
@@ -86,6 +86,8 @@ def compute_fScore(gold_outputs,
   concepts_as_list_predicted, concepts_as_list_gold = tensor_to_list(gold_outputs, predicted_outputs, eos_index,
                                                                        extended_vocab, config)
 
+  print("concepts_as_list_gold ", concepts_as_list_gold)
+  print("concepts_as_list_predicted ", concepts_as_list_predicted)
   f_score = 0
   batch_size = len(concepts_as_list_gold)
   for i in range(batch_size):
@@ -183,25 +185,13 @@ def eval_step(model: nn.Module,
     unnumericalized_inputs = batch['initial_sentence']
     unnumericalized_concepts = batch['concepts_string']
     # compute extended vocab
-    extended_vocab = deepcopy(vocabs.shared_vocab)
+    extended_vocab, extended_vocab_size = construct_extended_vocabulary(unnumericalized_inputs, vocabs)
 
-     # compute extended vocabulary size
-    extended_vocab_size = len(extended_vocab.items())
-
-    # add in the extended vocabulary the words from the initial input
-    for sentence in unnumericalized_inputs:
-        for token in sentence:
-            if token not in extended_vocab.keys():
-                extended_vocab[token] = extended_vocab_size
-                extended_vocab_size += 1
-
+    # compute indices
     indices = [[extended_vocab[t] for t in sentence] for sentence in unnumericalized_inputs]
 
-    # numericalized_output
-    gold_outputs = torch.transpose(torch.as_tensor([[extended_vocab[word]
-                                                         if word in extended_vocab.keys()
-                                                         else extended_vocab[UNK] for word in sentence]
-                                                        for sentence in unnumericalized_concepts]), 0, 1).to(device)
+    # numericalized concepts after the new vocabulary and put it on the device
+    gold_outputs = numericalize_concepts(extended_vocab, unnumericalized_concepts).to(device)
 
     logits, predictions = model(inputs, inputs_lengths,
                                     extended_vocab_size, torch.as_tensor(indices),
@@ -247,7 +237,8 @@ def train_step(model: nn.Module,
                optimizer: Optimizer,
                batch: Dict[str, torch.Tensor],
                vocabs: Vocabs,
-               config: CfgNode):
+               config: CfgNode,
+               teacher_forcing_ratio: float):
   inputs = batch['sentence']
   inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts']
@@ -262,9 +253,11 @@ def train_step(model: nn.Module,
   if config.USE_POINTER_GENERATOR:
     logits, predictions = model(inputs, inputs_lengths,
                                     vocabs.shared_vocab_size, torch.as_tensor(indices),
-                                    gold_outputs)
+                                    teacher_forcing_ratio, gold_outputs)
   else:
-    logits, predictions = model(inputs, inputs_lengths, gold_output_sequence=gold_outputs)
+    logits, predictions = model(inputs, inputs_lengths,
+                                teacher_forcing_ratio=teacher_forcing_ratio,
+                                gold_output_sequence=gold_outputs)
 
   f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab, config)
   loss = compute_loss(criterion, logits, gold_outputs)
@@ -285,13 +278,15 @@ def train_model(model: nn.Module,
                 config: CfgNode,
                 device):
   model.train()
+  teacher_forcing_ratio = 1
+  step_teacher_forcing_ratio = teacher_forcing_ratio / no_epochs
   for epoch in range(no_epochs):
     start_time = time.time()
     epoch_loss = 0
     no_batches = 0
     batch_f_score_train = 0
     for batch in train_data_loader:
-        batch_loss, f_score_train = train_step(model, criterion, optimizer, batch, vocabs, config)
+        batch_loss, f_score_train = train_step(model, criterion, optimizer, batch, vocabs, config, teacher_forcing_ratio)
         batch_f_score_train += f_score_train
         epoch_loss += batch_loss
         no_batches += 1
@@ -299,11 +294,12 @@ def train_model(model: nn.Module,
     batch_f_score_train = batch_f_score_train / no_batches
     fscore, dev_loss = evaluate_model(
         model, criterion, max_out_len, vocabs, dev_data_loader, config, device)
+    teacher_forcing_ratio -= step_teacher_forcing_ratio
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time
     print('Epoch {} (took {:.2f} seconds)'.format(epoch + 1, time_passed))
-    print('Train loss: {}, dev loss: {}, f_score_train: {}, f-score: {}'.format(epoch_loss, dev_loss,                                                                             batch_f_score_train, fscore))
+    print('Train loss: {}, dev loss: {}, f_score_train: {}, f-score: {}'.format(epoch_loss, dev_loss, batch_f_score_train, fscore))
     train_writer.add_scalar('loss', epoch_loss, epoch)
     eval_writer.add_scalar('loss', dev_loss, epoch)
     eval_writer.add_scalar('f-score', fscore, epoch)

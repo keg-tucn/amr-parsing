@@ -161,7 +161,7 @@ class DecoderStep(nn.Module):
       encoder_states: Encoder outputs with shape
         (input seq len, batch size, hidden size).
       attention_mask: Attention mask (batch size, input seq len).
-      indices: indices in the extended vocab.
+      indices: indices of each word in the input corresponding to the extended vocab.
       extended_vocab_size: the size of the extended vocab.
       batch_size: the batch size.
       device: the device the model is running on.
@@ -193,7 +193,7 @@ class DecoderStep(nn.Module):
 
     # generation probability
     if self.use_pointer_generator:
-      p_gen_input = torch.cat((context_vector, decoder_state[0], lstm_input), 1)
+      p_gen_input = torch.cat((context_vector, decoder_state[0], lstm_input), -1)
       p_gen = self.p_gen_linear(p_gen_input)
       p_gen = torch.sigmoid(p_gen).to(device=device)
 
@@ -213,12 +213,10 @@ class Decoder(nn.Module):
   def __init__(self,
                 output_vocab_size: int,
                 config: CfgNode,
-                teacher_forcing_ratio: float = 0.5,
                 device: str = "cpu"):
     super(Decoder, self).__init__()
     self.device = device
     self.output_vocab_size = output_vocab_size
-    self.teacher_forcing_ratio = teacher_forcing_ratio
     self.decoder_step = DecoderStep(output_vocab_size, config)
     self.initial_state_layer_h = nn.Linear(
       config.HIDDEN_SIZE, config.HIDDEN_SIZE)
@@ -249,6 +247,7 @@ class Decoder(nn.Module):
               attention_mask: torch.Tensor,
               extended_vocab_size: int,
               indices: torch.Tensor,
+              teacher_forcing_ratio: float = 0.0,
               decoder_inputs: torch.Tensor = None,
               max_out_length: int = None):
     """Bahdanau style decoder.
@@ -260,7 +259,7 @@ class Decoder(nn.Module):
         (num_enc_layers, batch size, hidden size).
       attention_mask: Attention mask (tensor of bools), shape
         (batch size, input seq len).
-      indices: indices in the extended vocab.
+      indices of each word in the input corresponding to the extended vocab.
       decoder_inputs (torch.Tensor): Decoder input for each step, with shape
         (output seq len, batch size). These should be sent on the train flow,
         and consist of the gold output sequence. On the inference flow, they
@@ -297,7 +296,9 @@ class Decoder(nn.Module):
       all_predictions[i] = predicted_token
       # Get the next decoder input, either from gold (if train & teacher forcing,
       # or use the predicted token).
-      teacher_forcing = random.random() < self.teacher_forcing_ratio
+      print("teacher_forcing_ratio ", teacher_forcing_ratio)
+      teacher_forcing = random.random() < teacher_forcing_ratio
+      print("teacher_forcing ", teacher_forcing)
       if self.training and teacher_forcing:
         previous_token = decoder_inputs[i]
       else:
@@ -334,6 +335,7 @@ class Seq2seq(nn.Module):
               input_lengths: torch.Tensor,
               extended_vocab_size: int= None,
               indices: torch.Tensor= None,
+              teacher_forcing_ratio: float = 0.0,
               gold_output_sequence: torch.Tensor = None,
               max_out_length: int = None):
     """Forward seq2seq.
@@ -356,7 +358,8 @@ class Seq2seq(nn.Module):
     indices = indices.to(device=self.device) if indices is not None else None
     if self.training:
       logits, predictions = self.decoder(
-        encoder_output, attention_mask, extended_vocab_size, indices, gold_output_sequence)
+        encoder_output, attention_mask, extended_vocab_size, indices,
+                teacher_forcing_ratio, gold_output_sequence)
     else:
       logits, predictions = self.decoder(
         encoder_output, attention_mask, extended_vocab_size, indices, max_out_length = max_out_length)

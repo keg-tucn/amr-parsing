@@ -44,9 +44,14 @@ def numericalize(training_entry: TrainingEntry,
   does not exist (is None).
   Args:
     vocabs: Vocabs object with the 3 vocabs (tokens, concepts, relations).
+    use_shared: a flag telling us whether to use the shared vocabulary or
+    the concept vocabulary and token vocabulary separately.
+    This depends if the pointer generator is used or not.
+    glove_embeddings: pertained Glove embeddings
   Returns a tuple of:
     sentece: List of token indices.
     concepts: List of concept indices.
+    glove_embeddings: List of pertained Glove embeddings indices.
     adj_mat: Adjacency matrix which contains arc labels indices in the vocab.
   """
   # Process sentence.

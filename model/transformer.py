@@ -116,8 +116,8 @@ class TransformerSeq2Seq(nn.Module):
     def forward(self,
                 input_sequence: torch.Tensor,
                 input_lengths: torch.Tensor = None,
-                teacher_forcing_ratio: float = 0.0,
                 gold_output_sequence: torch.Tensor = None,
+                teacher_forcing_ratio: float = 0.0,
                 max_out_length: int = None):
         """Forward transformer
 

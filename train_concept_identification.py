@@ -16,12 +16,12 @@ from torch.optim import Optimizer
 from torch.utils.tensorboard import SummaryWriter
 from yacs.config import CfgNode
 
-from data_pipeline.dummy.dummy_dataset import DummySeq2SeqDataset, BOS
+from data_pipeline.dummy.dummy_dataset import DummySeq2SeqDataset
 from data_pipeline.dummy.dummy_vocab import DummyVocabs
 from data_pipeline.copy_sequence.copy_sequence_dataset import CopySequenceDataset, build_copy_vocab
 from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
-from data_pipeline.dataset import PAD, EOS, UNK, PAD_IDX
+from data_pipeline.dataset import PAD, BOS, EOS, UNK, PAD_IDX
 from data_pipeline.dataset import AMRDataset
 from data_pipeline.training_entry import ROOT
 from config import get_default_config
@@ -423,7 +423,7 @@ def prepare_pretrain_model(criterion,
                            scheduler,
                            max_out_len: int,
                            device: str,
-                           cfg: CfgNode,
+                           config: CfgNode,
                            tensorboard_dir: str):
     """
       Prepare Transformer model for pretraining on Wikitext2 Dataset
@@ -432,19 +432,22 @@ def prepare_pretrain_model(criterion,
         scheduler: scheduler for loss computation
         max_out_len: Max sentence length
         device: device to train on
-        cfg: config node from config file
+        config: config node from config file
         tensorboard_dir: directory where to load the experiments
     """
     train_writer = SummaryWriter(tensorboard_dir + "/train")
     eval_writer = SummaryWriter(tensorboard_dir + "/eval")
-    if cfg.COPY_SEQUENCE:
+    if config.COPY_SEQUENCE:
       train_iter, val_iter, test_iter = WikiText2()
-      tokenizer = get_tokenizer('basic_english')
-      pretrain_special_words = ['<bos>', EOS, "<extra_pad>"]
-      pretrain_vocab = build_copy_vocab(train_iter, tokenizer, pretrain_special_words)
-      pretrain_bos_index = list(pretrain_vocab.token_vocab.keys()).index('<bos>')
-      pretrain_dataset = CopySequenceDataset(pretrain_vocab, train_iter, max_sen_len=max_out_len)
-      pretrain_eval_dataset = CopySequenceDataset(pretrain_vocab, test_iter, max_sen_len=max_out_len)
+      pretrain_special_words = [BOS, EOS, "<extra_pad>"]
+      pretrain_vocab = build_copy_vocab(train_iter, pretrain_special_words)
+      pretrain_bos_index = list(pretrain_vocab.token_vocab.keys()).index(BOS)
+      pretrain_dataset = CopySequenceDataset(pretrain_vocab,
+                                             train_iter,
+                                             max_sen_len=max_out_len)
+      pretrain_eval_dataset = CopySequenceDataset(pretrain_vocab,
+                                                  test_iter,
+                                                  max_sen_len=max_out_len)
       if not FLAGS.max_out_len:
         max_out_len = pretrain_dataset.max_concepts_length
       pretrain_vocab_size = pretrain_vocab.token_vocab_size
@@ -457,18 +460,17 @@ def prepare_pretrain_model(criterion,
       pretrain_model = TransformerSeq2Seq(pretrain_vocab_size,
                                           pretrain_vocab_size,
                                           pretrain_bos_index,
-                                          cfg.TRANSF_BASED,
+                                          config.TRANSF_BASED,
                                           device=device).to(device)
       pretrain_model.init_params()
       optimizer = init_optimizer(pretrain_model)
       print("TRAINING ON", device)
-      train_model(pretrain_model, criterion, optimizer, cfg.PRETRAIN_STEPS,
+      train_model(pretrain_model, criterion, optimizer, config.PRETRAIN_STEPS,
                   max_out_len, pretrain_vocab,
                   dataloader, eval_dataloader,
                   device,
                   train_writer, eval_writer,
-                  # Send config
-                  cfg,
+                  config,
                   scheduler)
 
 

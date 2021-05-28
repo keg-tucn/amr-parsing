@@ -7,15 +7,21 @@ from torchtext.datasets import WikiText2
 
 from collections import Counter
 from data_pipeline.copy_sequence.copy_sequence_vocab import CopySequenceVocab
-from data_pipeline.dataset import EOS, UNK
+from data_pipeline.dataset import EOS, UNK, BOS
 from constants import SENTENCE_KEY, SENTENCE_LEN_KEY, CONCEPTS_KEY
 
 
 def add_bos(sentence):
-    sentence.insert(0, "<bos>")
+    """
+        Add '<bos>' at the beginning of sentence
+    """
+    sentence.insert(0, BOS)
 
 
 def add_eos(sentence):
+    """
+        Add '<eos>' at the end of sentence
+    """
     sentence.append(EOS)
 
 
@@ -33,11 +39,13 @@ def numericalize(raw_text_iter, vocab: CopySequenceVocab, tokenizer):
     concepts = []
     word_data = []
     for item in raw_text_iter:
-        if "= =" not in item:
+        # Remove headers
+        if "= " not in item:
             word_sentence = []
             sentence = []
             decode_sentence = []
             for token in tokenizer(item):
+                # Remove punctuation
                 if token not in ",.'!?-()@=†\\s":
                     word_sentence.append(token)
             add_eos(word_sentence)
@@ -65,16 +73,16 @@ def denumericalize(sentences, vocab: CopySequenceVocab):
     return word_data
 
 
-def build_copy_vocab(dataset, tokenizer, special_words):
+def build_copy_vocab(dataset, special_words):
     """
         Function that builds Vocabulary for Copy Sequence Task
         Args:
           dataset: iterator object containing dataset paragraphs
-          tokenizer: language tokenizer to split lines
           special_words: Special words in vocabulary
         Returns:
           CopySequenceVocab object
     """
+    tokenizer = get_tokenizer('basic_english')
     # Hash Dictionary of words
     counter = Counter()
     # Line is a paragraph
@@ -168,10 +176,9 @@ class CopySequenceDataset(Dataset):
 if __name__ == "__main__":
 
     train_iter, val_iter, test_iter = WikiText2()
-    tokenizer = get_tokenizer('basic_english')
-    special_words = ['<bos>', EOS, "<extra_pad>"]
+    special_words = [BOS, EOS, "<extra_pad>"]
 
-    vocab = build_copy_vocab(train_iter, tokenizer, special_words)
+    vocab = build_copy_vocab(train_iter, special_words)
     dataset = CopySequenceDataset(vocab, train_iter)
     dataloader = DataLoader(dataset, batch_size=3,
                             collate_fn=dataset.copy_sequence_collate_fn)

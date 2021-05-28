@@ -2,6 +2,7 @@ from typing import List, Tuple, Dict
 from collections import Counter
 import os
 import pickle
+from copy import deepcopy
 
 import penman
 from penman.models import noop
@@ -15,7 +16,7 @@ TOKENS_CACHE_FILE = 'tokens.pickle'
 CONCEPTS_CACHE_FILE = 'concepts.pickle'
 RELATIONS_CACHE_FILE = 'relations.pickle'
 
-def build_vocab(words: List[str], special_words:List[str], min_frequency: int):
+def build_vocab(words: List[str], special_words: List[str], min_frequency: int):
   words_counter = Counter(words)
   words_and_freq = sorted(
     words_counter.items(), key=lambda pair: pair[1], reverse=True)
@@ -26,7 +27,7 @@ def build_vocab(words: List[str], special_words:List[str], min_frequency: int):
   vocab_words = special_words + filtered_words
   vocab = {word: i for i, word in enumerate(vocab_words)}
   return vocab
-  
+
 def get_cache_paths():
   cache_dir = os.path.join(definitions.PROJECT_ROOT_DIR, VOCAB_PATH)
   cache_files = [TOKENS_CACHE_FILE, CONCEPTS_CACHE_FILE, RELATIONS_CACHE_FILE]
@@ -126,20 +127,46 @@ class Vocabs():
       paths, special_words, min_frequencies)
     self.token_vocab = token_vocab
     self.concept_vocab = concept_vocab
+    self.shared_vocab = self.create_shared_vocab()
     self.relation_vocab = relation_vocab
     self.token_vocab_size = len(token_vocab.keys())
     self.concept_vocab_size = len(concept_vocab.keys())
+    self.shared_vocab_size = len(self.shared_vocab.keys())
     self.relation_vocab_size = len(relation_vocab.keys())
 
-  def get_token_idx(self, token: str):
-    if token in self.token_vocab.keys():
-      return self.token_vocab[token]
-    return self.token_vocab[self.unknown_special_word]
+  def create_shared_vocab(self):
+   """
+   This method creates the shared vocabulary between input and output.
+   This is done by merging the input and output vocabularies.
+   We use the convention that the input tokens comes first.
+   This is needed for pointer generator.
+   :return: the shared vocabulary
+   """
+   shared_vocab = deepcopy(self.token_vocab)
+   new_index = len(shared_vocab.items())
+   for concept in self.concept_vocab.keys():
+        if concept not in shared_vocab.keys():
+            shared_vocab[concept] = new_index
+            new_index += 1
+   return shared_vocab
 
-  def get_concept_idx(self, concept: str):
-    if concept in self.concept_vocab.keys():
-      return self.concept_vocab[concept]
-    return self.concept_vocab[self.unknown_special_word]
+  def get_token_idx(self, token: str, use_shared: bool):
+    if use_shared:
+        vocab = self.shared_vocab
+    else:
+        vocab = self.token_vocab
+    if token in vocab.keys():
+        return vocab[token]
+    return vocab[self.unknown_special_word]
+
+  def get_concept_idx(self, concept: str, use_shared: bool):
+    if use_shared:
+        vocab = self.shared_vocab
+    else:
+        vocab = self.concept_vocab
+    if concept in vocab.keys():
+      return vocab[concept]
+    return vocab[self.unknown_special_word]
 
   def get_relation_idx(self, relation: str):
     if relation in self.relation_vocab.keys():

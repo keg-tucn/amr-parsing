@@ -24,7 +24,9 @@ class Encoder(nn.Module):
       self.glove.load_state_dict({'weight': weight_matrix})
       self.glove.weight.requires_grad = False
     emb_dim = config.EMB_DIM + config.GLOVE_EMB_DIM if self.use_glove else config.EMB_DIM
-    self.lstm = nn.LSTM(emb_dim, config.HIDDEN_SIZE, config.NUM_LAYERS, bidirectional=use_bilstm)
+    self.lstm = nn.LSTM(
+      emb_dim, config.HIDDEN_SIZE, config.NUM_LAYERS,
+      bidirectional=use_bilstm)
 
   def forward(self, inputs: torch.Tensor, input_lengths: torch.Tensor):
     """
@@ -102,7 +104,7 @@ class AdditiveAttention(nn.Module):
     encoder_states = encoder_states.transpose(1, 2)
     context_vector = torch.bmm(encoder_states, torch.unsqueeze(attention_scores, -1))
     context_vector = context_vector.squeeze(dim=-1)
-    return context_vector
+    return context_vector, attention_scores
 
 class DecoderClassifier(nn.Module):
 
@@ -136,12 +138,20 @@ class DecoderStep(nn.Module):
     self.output_embedding = nn.Embedding(output_vocab_size, config.EMB_DIM)
     # Classifier input: previous embedding, decoder state, context vector.
     self.classifier = DecoderClassifier(output_vocab_size, config)
-
+    self.drop_out = config.DROPOUT_RATE
+    self.use_pointer_generator = config.USE_POINTER_GENERATOR
+    if self.use_pointer_generator:
+        self.p_gen_linear = nn.Linear(config.HIDDEN_SIZE * 3 + config.EMB_DIM, 1, bias=True)
+    self.output_vocab_size = output_vocab_size
   def forward(self,
               input: torch.Tensor,
               previous_state: Tuple[torch.Tensor, torch.Tensor],
               encoder_states: torch.Tensor,
-              attention_mask: torch.Tensor):
+              attention_mask: torch.Tensor,
+              indices : torch.Tensor,
+              extended_vocab_size: int,
+              batch_size: int,
+              device):
     """
     Args:
       input: Decoder input (previous prediction or gold label), with shape
@@ -151,6 +161,12 @@ class DecoderStep(nn.Module):
       encoder_states: Encoder outputs with shape
         (input seq len, batch size, hidden size).
       attention_mask: Attention mask (batch size, input seq len).
+      indices: the index of each word in the input sequence corresponding to the
+        extended vocab. This is needed in order to compute the probability for oov
+        words that appeared in source sequence.
+      extended_vocab_size: the size of the extended vocab.
+      batch_size: the batch size.
+      device: the device the model is running on.
     Returns:
        A tuple of:
          decoder state with shape (batch size, hidden size)
@@ -161,17 +177,37 @@ class DecoderStep(nn.Module):
     previous_embedding = self.output_embedding(input)
     # Compute context vector.
     h = previous_state[0]
-    context_vector = self.additive_attention(h, encoder_states, attention_mask)
+    context_vector, attention = self.additive_attention(h, encoder_states, attention_mask)
     # Compute lstm input.
     lstm_input =  torch.cat((previous_embedding, context_vector), dim=-1)
+    if self.training:
+      # Add dropout to lstm input.
+      dropout = nn.Dropout(p=self.drop_out)
+      lstm_input = dropout(lstm_input)
     # Compute new decoder state.
     decoder_state = self.lstm_cell(lstm_input, previous_state)
     # Compute classifier input (alternatively a pre-output can be computed
     # before with a NN layer).
+
     classifier_input = torch.cat(
       (previous_embedding, decoder_state[0], context_vector), dim=-1)
     predictions = self.classifier(classifier_input)
-    return decoder_state, predictions
+
+    # generation probability
+    if self.use_pointer_generator:
+      p_gen_input = torch.cat((context_vector, decoder_state[0], lstm_input), -1)
+      p_gen = self.p_gen_linear(p_gen_input)
+      p_gen = torch.sigmoid(p_gen).to(device=device)
+
+      # create the extended vocabulary probabilities
+      extended_vocab_probabilities = torch.zeros((batch_size, extended_vocab_size)).to(device=device)
+      output_vocab_size = predictions.shape[1]
+      extended_vocab_probabilities[:, :output_vocab_size] = p_gen * predictions
+      extended_vocab_probabilities = extended_vocab_probabilities.scatter_add(1, indices, (1 - p_gen) * attention)
+
+      return decoder_state, extended_vocab_probabilities
+    else:
+      return decoder_state, predictions
 
 
 class Decoder(nn.Module):
@@ -179,17 +215,16 @@ class Decoder(nn.Module):
   def __init__(self,
                 output_vocab_size: int,
                 config: CfgNode,
-                teacher_forcing_ratio: float = 0.5,
                 device: str = "cpu"):
     super(Decoder, self).__init__()
     self.device = device
     self.output_vocab_size = output_vocab_size
-    self.teacher_forcing_ratio = teacher_forcing_ratio
     self.decoder_step = DecoderStep(output_vocab_size, config)
     self.initial_state_layer_h = nn.Linear(
       config.HIDDEN_SIZE, config.HIDDEN_SIZE)
     self.initial_state_layer_c = nn.Linear(
       config.HIDDEN_SIZE, config.HIDDEN_SIZE)
+    self.config = config
 
   def compute_initial_decoder_state(self,
                                     last_encoder_states: Tuple[torch.Tensor, torch.Tensor]):
@@ -212,6 +247,9 @@ class Decoder(nn.Module):
   def forward(self,
               encoder_output: Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
               attention_mask: torch.Tensor,
+              extended_vocab_size: int,
+              indices: torch.Tensor,
+              teacher_forcing_ratio: float = 0.0,
               decoder_inputs: torch.Tensor = None,
               max_out_length: int = None):
     """Bahdanau style decoder.
@@ -223,11 +261,14 @@ class Decoder(nn.Module):
         (num_enc_layers, batch size, hidden size).
       attention_mask: Attention mask (tensor of bools), shape
         (batch size, input seq len).
+      indices: the index of each word in the input sequence corresponding to the
+        extended vocab. This is needed in order to compute the probability for oov
+        words that appeared in source sequence.
       decoder_inputs (torch.Tensor): Decoder input for each step, with shape
         (output seq len, batch size). These should be sent on the train flow,
         and consist of the gold output sequence. On the inference flow, they
         should not be used (None by default).
-      max_output_length: Maximum output length (sent on the inference flow), for
+      max_out_length: Maximum output length (sent on the inference flow), for
         the sequences to have a fixed size in the batch. None by default.
     """
     if self.training:
@@ -242,20 +283,26 @@ class Decoder(nn.Module):
     # Create a batch of initial tokens.
     previous_token = torch.full((batch_size,), BOS_IDX).to(device=self.device)
 
+    if self.config.USE_POINTER_GENERATOR:
+      # When using pointer generator we also need the words in the input sequence
+      # therefore we use the extended vocab
+      all_logits_vocab_size = extended_vocab_size
+    else:
+      all_logits_vocab_size = self.output_vocab_size
 
     all_logits = torch.zeros(
-      (output_seq_len, batch_size, self.output_vocab_size)).to(device=self.device)
+      (output_seq_len, batch_size, all_logits_vocab_size)).to(device=self.device)
     all_predictions = torch.zeros((output_seq_len, batch_size))
     for i in range(output_seq_len):
       decoder_state, logits = self.decoder_step(
-        previous_token, decoder_state, encoder_states, attention_mask)
+        previous_token, decoder_state, encoder_states, attention_mask, indices, extended_vocab_size, batch_size, self.device)
       # Get predicted token.
       step_predictions = torch.softmax(logits, dim=-1)
       predicted_token = torch.argmax(step_predictions, dim=-1)
       all_predictions[i] = predicted_token
       # Get the next decoder input, either from gold (if train & teacher forcing,
       # or use the predicted token).
-      teacher_forcing = random.random() < self.teacher_forcing_ratio
+      teacher_forcing = random.random() < teacher_forcing_ratio
       if self.training and teacher_forcing:
         previous_token = decoder_inputs[i]
       else:
@@ -274,10 +321,12 @@ class Seq2seq(nn.Module):
                glove_embeddings: Dict = None,
                device="cpu"):
     super(Seq2seq, self).__init__()
-    hidden_size = config.HIDDEN_SIZE
     self.encoder = Encoder(input_vocab_size, config, glove_embeddings=glove_embeddings)
     self.decoder = Decoder(output_vocab_size, config, device=device)
     self.device = device
+    if config.USE_POINTER_GENERATOR:
+      self.encoder.embedding.weight = self.decoder.decoder_step.output_embedding.weight
+
 
   def create_mask(self, input_lengths: torch.Tensor, mask_seq_len: int):
     arr_range = torch.arange(mask_seq_len)
@@ -288,6 +337,9 @@ class Seq2seq(nn.Module):
   def forward(self,
               input_sequence: torch.Tensor,
               input_lengths: torch.Tensor,
+              extended_vocab_size: int= None,
+              indices: torch.Tensor= None,
+              teacher_forcing_ratio: float = 0.0,
               gold_output_sequence: torch.Tensor = None,
               max_out_length: int = None):
     """Forward seq2seq.
@@ -296,19 +348,25 @@ class Seq2seq(nn.Module):
         input_sequence (torch.Tensor): Input sequence of shape
           (input seq len, batch size).
         input_lengths: Lengths of the sequences in the batch (batch size).
+        extended_vocab_size: the size of the extended vocab.
+        indices: indices in the extended vocab.
         gold_output_sequence: Output sequence (output seq len, batch size).
+        max_out_length: Maximum output length (sent on the inference flow), for
+        the sequences to have a fixed size in the batch. None by default.
     Returns:
       predictions of shape (out seq len, batch size, output no of classes).
     """
-    encoder_output, _ = self.encoder(input_sequence, input_lengths)
+    encoder_output = self.encoder(input_sequence, input_lengths)
     input_seq_len = input_sequence.shape[0]
     attention_mask = self.create_mask(input_lengths, input_seq_len)
+    indices = indices.to(device=self.device) if indices is not None else None
     if self.training:
       logits, predictions = self.decoder(
-        encoder_output, attention_mask, gold_output_sequence)
+        encoder_output, attention_mask, extended_vocab_size, indices,
+                teacher_forcing_ratio, gold_output_sequence)
     else:
       logits, predictions = self.decoder(
-        encoder_output, attention_mask, max_out_length = max_out_length)
+        encoder_output, attention_mask, extended_vocab_size, indices, max_out_length = max_out_length)
     return logits, predictions
 
 class DenseMLP(nn.Module):

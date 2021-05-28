@@ -60,11 +60,8 @@ class TransformerSeq2Seq(nn.Module):
         self.BOS_IDX = bos_index
         self.device = device
         # Embed inputs
-        print("in sz", input_vocab_size)
-        print("out sz", output_vocab_size)
         self.enc_embedding = nn.Embedding(
             input_vocab_size, embedding_dim).to(self.device)
-        print(self.enc_embedding)
         self.dec_embedding = nn.Embedding(
             output_vocab_size, embedding_dim).to(self.device)
         # Positional Encoding
@@ -72,11 +69,11 @@ class TransformerSeq2Seq(nn.Module):
         self.pos_decoder = PositionalEncoding(embedding_dim, dropout)
         # Vanilla Transformer
         encoder_layers = TransformerEncoderLayer(
-            embedding_dim, head_number, hidden_size, dropout)
+            embedding_dim, head_number, hidden_size, dropout).to(self.device)
         self.transformer_encoder = TransformerEncoder(
             encoder_layers, layers_number).to(self.device)
         decoder_layers = TransformerDecoderLayer(
-            embedding_dim, head_number, hidden_size, dropout)
+            embedding_dim, head_number, hidden_size, dropout).to(self.device)
         self.transformer_decoder = TransformerDecoder(
             decoder_layers, layers_number).to(self.device)
 
@@ -119,6 +116,7 @@ class TransformerSeq2Seq(nn.Module):
     def forward(self,
                 input_sequence: torch.Tensor,
                 input_lengths: torch.Tensor = None,
+                teacher_forcing_ratio: float = 0.0,
                 gold_output_sequence: torch.Tensor = None,
                 max_out_length: int = None):
         """Forward transformer
@@ -141,19 +139,18 @@ class TransformerSeq2Seq(nn.Module):
                                                    gold_output_sequence,
                                                    trg_mask=trg_mask)
         else:
-            # Begin with Root token
             predictions = torch.zeros(
-                1, input_sequence.shape[1]).type(torch.LongTensor).to(self.device)
+                max_out_length, input_sequence.shape[1]).type(torch.LongTensor).to(self.device)
             predictions[0, :] = self.BOS_IDX
-            # Generate max_out_len tokens
+            trg_mask = self.make_triangular_mask(predictions.shape[0])
+            # Apply model max_out_len times
             for i in range(max_out_length):
-                trg_mask = self.make_triangular_mask(i+1)
-                logits, top_indices = self.apply_layer(input_sequence,
-                                                       predictions,
-                                                       trg_mask=trg_mask)
-                # Take last decoded token
-                top_indices_last_token = top_indices[-1:]
-                # Add it to previously decoded tokens
-                predictions = torch.cat(
-                    [predictions, top_indices_last_token], dim=0)
+                logits, predictions = self.apply_layer(
+                    input_sequence, predictions, trg_mask=trg_mask)
         return logits, predictions
+
+    def init_params(self):
+        """Initialize parameters with Glorot / fan_avg"""
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)

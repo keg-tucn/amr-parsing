@@ -11,7 +11,9 @@ _C.CONCEPT_IDENTIFICATION.LOAD_PATH = ''
 # Persisted Component
 _C.CONCEPT_IDENTIFICATION.PERSISTED_COMPONENT = ''
 # input sequence to output sequence or input sequence to input sequence
-_C.CONCEPT_IDENTIFICATION.COPY_SEQUENCE = True
+_C.CONCEPT_IDENTIFICATION.COPY_SEQUENCE = False
+# Steps for pretraining
+_C.CONCEPT_IDENTIFICATION.PRETRAIN_STEPS = 15
 # Configs for LSTM-based Concept Identification.
 _C.CONCEPT_IDENTIFICATION.LSTM_BASED = CN()
 # Embeddings dimension.

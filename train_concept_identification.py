@@ -1,8 +1,8 @@
 import os
+import os.path
 from typing import Dict
 import time
 import string
-import pprint
 import random
 
 from absl import app
@@ -18,6 +18,7 @@ from yacs.config import CfgNode
 
 from data_pipeline.dummy.dummy_dataset import DummySeq2SeqDataset, BOS
 from data_pipeline.dummy.dummy_vocab import DummyVocabs
+from data_pipeline.copy_sequence.copy_sequence_dataset import CopySequenceDataset, build_copy_vocab
 from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
 from data_pipeline.dataset import PAD, EOS, UNK, PAD_IDX
@@ -28,10 +29,11 @@ from models import Seq2seq
 from data_pipeline.glove_embeddings import GloVeEmbeddings
 from utils.extended_vocab_utils import construct_extended_vocabulary, numericalize_concepts
 from model.transformer import TransformerSeq2Seq
+from optimizer import NoamOpt
+from yacs.config import CfgNode
+from torchtext.datasets import WikiText2
+from torchtext.data.utils import get_tokenizer
 
-DUMMY_TRAIN_SIZE = 14000
-DUMMY_DEV_SIZE = 4000
-DUMMY_LEN = 20
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('config',
@@ -58,15 +60,28 @@ flags.DEFINE_integer('no_epochs',
 flags.DEFINE_boolean('use_glove',
                      default=True,
                      help=('Flag which tells whether model should use GloVe Embeddings or not.'))
+flags.DEFINE_integer('max_out_len',
+                     short_name='len',
+                     default=20,
+                     help=('Max sentence length'))
 flags.DEFINE_boolean('dummy',
                      default=False,
                      help=('Dataset selection - dummy or default.'))
+flags.DEFINE_integer('dummy_train_size',
+                     short_name='dts',
+                     default=14000,
+                     help=('Max AMR length'))
+flags.DEFINE_integer('dummy_dev_size',
+                     short_name='dds',
+                     default=4000,
+                     help=('Max AMR length'))
 flags.DEFINE_boolean('transformer',
                      default=False,
                      help=('Model selection - transformer or LSTM.'))
 flags.DEFINE_boolean('train_is_test',
                      default=False,
                      help=('Train and test on same dataset.'))
+                     
 
 def compute_loss(criterion, logits, gold_outputs):
   """Computes cross entropy loss.
@@ -148,7 +163,7 @@ def tensor_to_list(gold_outputs,
   concepts_as_list_gold = indices_to_words(gold_list_no_padding, extended_vocab, config)
   concepts_as_list_predicted = indices_to_words(predicted_list_no_padding, extended_vocab, config)
 
-  return concepts_as_list_predicted, concepts_as_list_gold, gold_display, predicted_display
+  return concepts_as_list_predicted, concepts_as_list_gold
 
 
 def extract_padding(outputs, eos_index):
@@ -175,7 +190,7 @@ def indices_to_words(outputs_no_padding,
                      extended_vocab,
                      config: CfgNode):
 
-  if config.USE_POINTER_GENERATOR:
+  if config.LSTM_BASED.USE_POINTER_GENERATOR:
     vocab = extended_vocab
   else:
     vocab = extended_vocab.concept_vocab
@@ -193,7 +208,7 @@ def indices_to_words(outputs_no_padding,
 def eval_step(model: nn.Module,
               criterion: nn.Module,
               max_out_len: int,
-              vocabs: Vocabs,
+              vocabs,
               batch: Dict[str, torch.tensor],
               config: CfgNode,
               device: str):
@@ -201,7 +216,7 @@ def eval_step(model: nn.Module,
   inputs_lengths = batch['sentence_lengts'].to(device)
   gold_outputs = batch['concepts'].to(device)
 
-  if config.USE_POINTER_GENERATOR:
+  if config.LSTM_BASED.USE_POINTER_GENERATOR:
     unnumericalized_inputs = batch['initial_sentence']
     unnumericalized_concepts = batch['concepts_string']
     # compute extended vocab
@@ -233,7 +248,7 @@ def eval_step(model: nn.Module,
 def evaluate_model(model: nn.Module,
                    criterion: nn.Module,
                    max_out_len: int,
-                   vocabs: Vocabs,
+                   vocabs,
                    data_loader: DataLoader,
                    config: CfgNode,
                    device):
@@ -258,19 +273,20 @@ def train_step(model: nn.Module,
                batch: Dict[str, torch.Tensor],
                vocabs: Vocabs,
                config: CfgNode,
-               teacher_forcing_ratio: float):
+               device: str,
+               teacher_forcing_ratio: float=0.0):
   inputs = batch['sentence'].to(device)
   inputs_lengths = batch['sentence_lengts'].to(device)
   gold_outputs = batch['concepts'].to(device)
 
-  if config.USE_POINTER_GENERATOR:
+  if config.LSTM_BASED.USE_POINTER_GENERATOR:
     # initial sentence (un-numericalized)
     unnumericalized_inputs = batch['initial_sentence']
     # compute indices of the input sentence for the extended vocab
     indices = [[vocabs.shared_vocab[t] for t in sentence] for sentence in unnumericalized_inputs]
 
   optimizer.zero_grad()
-  if config.USE_POINTER_GENERATOR:
+  if config.LSTM_BASED.USE_POINTER_GENERATOR:
     logits, predictions = model(inputs, inputs_lengths,
                                     vocabs.shared_vocab_size, torch.as_tensor(indices),
                                     teacher_forcing_ratio, gold_outputs)
@@ -291,7 +307,7 @@ def train_model(model: nn.Module,
                 optimizer: Optimizer,
                 no_epochs: int,
                 max_out_len: int,
-                vocabs: Vocabs,
+                vocabs,
                 train_data_loader: DataLoader,
                 dev_data_loader: DataLoader,
                 device: str,
@@ -299,6 +315,9 @@ def train_model(model: nn.Module,
                 eval_writer: SummaryWriter,
                 config: CfgNode,
                 scheduler=None):
+  if config.LOAD_PATH:
+    model = load_model_weights(model, config.LOAD_PATH, config.PERSISTED_COMPONENT)
+
   model.train()
   teacher_forcing_ratio = 1
   step_teacher_forcing_ratio = teacher_forcing_ratio / no_epochs
@@ -307,6 +326,7 @@ def train_model(model: nn.Module,
     epoch_loss = 0
     no_batches = 0
     batch_f_score_train = 0
+    print("Training...")
     for batch in train_data_loader:
         batch_loss, f_score_train = train_step(model, criterion, optimizer, batch, vocabs, config, teacher_forcing_ratio)
         batch_f_score_train += f_score_train
@@ -314,6 +334,7 @@ def train_model(model: nn.Module,
         no_batches += 1
     epoch_loss = epoch_loss / no_batches
     batch_f_score_train = batch_f_score_train / no_batches
+    print("Evaluating...")
     fscore, dev_loss = evaluate_model(
         model, criterion, max_out_len, vocabs, dev_data_loader, config, device)
     # gradually decrease the teacher_forcing_racio
@@ -327,27 +348,52 @@ def train_model(model: nn.Module,
     eval_writer.add_scalar('loss', dev_loss, epoch)
     eval_writer.add_scalar('f-score', fscore, epoch)
     train_writer.add_scalar('f-score', batch_f_score_train, epoch)
+    # Use scheduler for LR optimization
     if scheduler:
       scheduler.step()
 
+  # Save pretrained model
+  if config.SAVE_PATH:
+    torch.save(model.state_dict(), config.SAVE_PATH)
+    
 
-def generate_sentences():
+def load_model_weights(model, load_path: str, component: str):
   """
-    Generates random sentences of length DUMMY_LEN for dummy dataset.
+    Loads pretrained model weights to current model
+    Args:
+      model: model whose weights need to be updated
+      load_path (str): file path to load from
+      component (str): part of pretrained model to load
+  """
+  if(os.path.exists(load_path)):
+    pretrained_dict = torch.load(load_path)
+    # If we're not loading a specific component, we're loading everything
+    if component:
+      # Select weights belonging to component
+      pretrained_dict = {k: v for k, v in pretrained_dict.items() if component in k}
+    model_dict = model.state_dict()
+    model_dict.update(pretrained_dict)
+    model.load_state_dict(model_dict)
+  return model
+
+
+def generate_sentences(len: int):
+  """
+    Generates random sentences of length len for dummy dataset.
 
     Returns:
       Train Sentences, Test Sentences, Dummy Vocabs
   """
   all_sentences = []
   all_sentences_dev = []
-  for i in range(DUMMY_TRAIN_SIZE):
+  for i in range(FLAGS.dummy_train_size):
     letters = string.ascii_lowercase
-    sentence = ''.join(random.choice(letters) for i in range(DUMMY_LEN))
+    sentence = ''.join(random.choice(letters) for i in range(len))
     all_sentences.append(sentence)
   print("all training sentences", all_sentences)
-  for i in range(DUMMY_DEV_SIZE):
+  for i in range(FLAGS.dummy_dev_size):
     letters = string.ascii_lowercase
-    sentence = ''.join(random.choice(letters) for i in range(DUMMY_LEN))
+    sentence = ''.join(random.choice(letters) for i in range(len))
     all_sentences_dev.append(sentence)
   print("all dev sentences", all_sentences_dev)
 
@@ -355,6 +401,75 @@ def generate_sentences():
   vocabs = DummyVocabs(all_sentences, UNK, special_words, min_frequencies=(1, 1, 1))
 
   return all_sentences, all_sentences_dev, vocabs
+
+
+def init_optimizer(model, 
+                   warmup:bool = False):
+  """Initialize optimizer to use with Transformer model
+     Args: 
+      model
+      warmup (bool): choose optimizer
+    Returns:
+      optimizer to be used
+  """
+  if warmup:
+    return NoamOpt(512, 1, 400,
+        torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
+  return torch.optim.Adam(model.parameters(), lr=5e-5)
+
+
+
+def prepare_pretrain_model(criterion,
+                           scheduler,
+                           max_out_len: int,
+                           device: str,
+                           cfg: CfgNode,
+                           tensorboard_dir: str):
+    """
+      Prepare Transformer model for pretraining on Wikitext2 Dataset
+      Args:
+        criterion: criterion for loss computation
+        scheduler: scheduler for loss computation
+        max_out_len: Max sentence length
+        device: device to train on
+        cfg: config node from config file
+        tensorboard_dir: directory where to load the experiments
+    """
+    train_writer = SummaryWriter(tensorboard_dir + "/train")
+    eval_writer = SummaryWriter(tensorboard_dir + "/eval")
+    if cfg.COPY_SEQUENCE:
+      train_iter, val_iter, test_iter = WikiText2()
+      tokenizer = get_tokenizer('basic_english')
+      pretrain_special_words = ['<bos>', EOS, "<extra_pad>"]
+      pretrain_vocab = build_copy_vocab(train_iter, tokenizer, pretrain_special_words)
+      pretrain_bos_index = list(pretrain_vocab.token_vocab.keys()).index('<bos>')
+      pretrain_dataset = CopySequenceDataset(pretrain_vocab, train_iter, max_sen_len=max_out_len)
+      pretrain_eval_dataset = CopySequenceDataset(pretrain_vocab, test_iter, max_sen_len=max_out_len)
+      if not FLAGS.max_out_len:
+        max_out_len = pretrain_dataset.max_concepts_length
+      pretrain_vocab_size = pretrain_vocab.token_vocab_size
+      dataloader = DataLoader(pretrain_dataset,
+                              batch_size=FLAGS.batch_size,
+                              collate_fn=pretrain_dataset.copy_sequence_collate_fn)
+      eval_dataloader = DataLoader(pretrain_eval_dataset,
+                                   batch_size=FLAGS.batch_size,
+                                   collate_fn=pretrain_dataset.copy_sequence_collate_fn)
+      pretrain_model = TransformerSeq2Seq(pretrain_vocab_size,
+                                          pretrain_vocab_size,
+                                          pretrain_bos_index,
+                                          cfg.TRANSF_BASED,
+                                          device=device).to(device)
+      pretrain_model.init_params()
+      optimizer = init_optimizer(pretrain_model)
+      print("TRAINING ON", device)
+      train_model(pretrain_model, criterion, optimizer, cfg.PRETRAIN_STEPS,
+                  max_out_len, pretrain_vocab,
+                  dataloader, eval_dataloader,
+                  device,
+                  train_writer, eval_writer,
+                  # Send config
+                  cfg,
+                  scheduler)
 
 
 def main(_):
@@ -369,6 +484,11 @@ def main(_):
     config_path = os.path.join('configs', config_file_name)
     cfg.merge_from_file(config_path)
     cfg.freeze()
+
+  concept_identification_config = cfg.CONCEPT_IDENTIFICATION  
+
+  max_out_len = FLAGS.max_out_len
+
   if not FLAGS.dummy:
     if FLAGS.train_subsets is None:
       train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
@@ -387,59 +507,38 @@ def main(_):
 
     special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
     vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))
+    glove_embeddings = GloVeEmbeddings(concept_identification_config.LSTM_BASED.GLOVE_EMB_DIM, UNK, [PAD, EOS, UNK]) \
+    if FLAGS.use_glove else None
+
+    if concept_identification_config.LSTM_BASED.USE_POINTER_GENERATOR:
+      use_shared = True
+      input_vocab_size = vocabs.shared_vocab_size
+      output_vocab_size = vocabs.shared_vocab_size
+    else:
+      use_shared = False
+      input_vocab_size = vocabs.token_vocab_size
+      output_vocab_size = vocabs.concept_vocab_size
+
+    train_dataset = AMRDataset(
+      train_paths, vocabs, device, seq2seq_setting=True, ordered=True, use_shared=use_shared, glove=glove_embeddings)
+    dev_dataset = AMRDataset(
+      dev_paths, vocabs, device, seq2seq_setting=True, ordered=True, use_shared=use_shared, glove=glove_embeddings)
+    max_out_len = train_dataset.max_concepts_length  
+
     train_dataset = AMRDataset(
         train_paths, vocabs, device, seq2seq_setting=True, ordered=True)
     dev_dataset = AMRDataset(
         dev_paths, vocabs, device, seq2seq_setting=True, ordered=True)
     bos_index = list(vocabs.concept_vocab.keys()).index(ROOT)
 
+    if not FLAGS.max_out_len:
+      max_out_len = train_dataset.max_concepts_length
   else:
-    all_sentences, all_sentences_dev, vocabs = generate_sentences()
+    all_sentences, all_sentences_dev, vocabs = generate_sentences(FLAGS.max_out_len)
     bos_index = list(vocabs.concept_vocab.keys()).index(BOS)
 
-    train_dataset = DummySeq2SeqDataset(all_sentences,
-                                        vocabs,
-                                        device)
-    dev_dataset = DummySeq2SeqDataset(all_sentences_dev,
-                                      vocabs,
-                                      device)
-
-  concept_identification_config = cfg.CONCEPT_IDENTIFICATION.LSTM_BASED
-
-  if FLAGS.train_subsets is None:
-    train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-                      'mt09sdl', 'proxy', 'wb', 'xinhua']
-  else:
-    # Take subsets from flag passed.
-    train_subsets = FLAGS.train_subsets.split(',')
-  if FLAGS.dev_subsets is None:
-    dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
-  else:
-    # Take subsets from flag passed.
-    dev_subsets = FLAGS.dev_subsets.split(',')
-
-  train_paths = get_paths('training', train_subsets)
-  dev_paths = get_paths('dev', dev_subsets)
-
-  special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
-  vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))
-  glove_embeddings = GloVeEmbeddings(concept_identification_config.GLOVE_EMB_DIM, UNK, [PAD, EOS, UNK]) \
-  if FLAGS.use_glove else None
-
-  if concept_identification_config.USE_POINTER_GENERATOR:
-    use_shared = True
-    input_vocab_size = vocabs.shared_vocab_size
-    output_vocab_size = vocabs.shared_vocab_size
-  else:
-    use_shared = False
-    input_vocab_size = vocabs.token_vocab_size
-    output_vocab_size = vocabs.concept_vocab_size
-
-  train_dataset = AMRDataset(
-    train_paths, vocabs, device, seq2seq_setting=True, ordered=True, use_shared=use_shared, glove=glove_embeddings)
-  dev_dataset = AMRDataset(
-    dev_paths, vocabs, device, seq2seq_setting=True, ordered=True, use_shared=use_shared, glove=glove_embeddings)
-  max_out_len = train_dataset.max_concepts_length
+    train_dataset = DummySeq2SeqDataset(all_sentences, vocabs)
+    dev_dataset = DummySeq2SeqDataset(all_sentences_dev, vocabs)
 
   train_data_loader = DataLoader(
       train_dataset, batch_size=FLAGS.batch_size,
@@ -448,24 +547,41 @@ def main(_):
       dev_dataset, batch_size=FLAGS.dev_batch_size,
       collate_fn=dev_dataset.collate_fn)
 
- 
   if FLAGS.config:
     config_file_name = FLAGS.config
     config_path = os.path.join('configs', config_file_name)
     cfg.merge_from_file(config_path)
     cfg.freeze()
 
+  criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
+  scheduler = None
+
   if FLAGS.transformer:
+    tensorboard_dir = 'temp/concept_identification_transf'
+    if not FLAGS.dummy:
+      # Override configs for Copy Sequence and Save Model Path
+      opts = ["CONCEPT_IDENTIFICATION.COPY_SEQUENCE", True,
+      "CONCEPT_IDENTIFICATION.SAVE_PATH", "temp/transformer.pth",
+      "CONCEPT_IDENTIFICATION.PERSISTED_COMPONENT", "encoder"]
+      cfg.merge_from_list(opts)
+      prepare_pretrain_model(criterion,
+                             scheduler,
+                             max_out_len,
+                             device,
+                             concept_identification_config,
+                             tensorboard_dir)
     model = TransformerSeq2Seq(vocabs.token_vocab_size,
                                vocabs.concept_vocab_size,
                                bos_index,
                                cfg.CONCEPT_IDENTIFICATION.TRANSF_BASED,
                                device=device).to(device)
-    lr = 0.2 # learning rate
-    optimizer = torch.optim.RMSprop(model.parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1.0, gamma=0.1)
+    model.init_params()
+    # Add Model Load Path
+    opts = ["CONCEPT_IDENTIFICATION.COPY_SEQUENCE", True,
+    "CONCEPT_IDENTIFICATION.LOAD_PATH", "temp/transformer.pth"]
+    cfg.merge_from_list(opts)
+    optimizer = init_optimizer(model)
 
-    tensorboard_dir = 'temp/concept_identification_transf'
   else:
     model = Seq2seq(
       input_vocab_size,
@@ -476,18 +592,27 @@ def main(_):
     tensorboard_dir = 'temp/concept_identification'
     optimizer = optim.Adam(model.parameters())
 
-  criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
-
   # Use --logdir temp/heads_selection for tensorboard dev upload
   if not os.path.exists(tensorboard_dir):
       os.makedirs(tensorboard_dir)
   train_writer = SummaryWriter(tensorboard_dir + "/train")
   eval_writer = SummaryWriter(tensorboard_dir + "/eval")
-  train_model(
-    model, criterion, optimizer, FLAGS.no_epochs,
-    max_out_len, vocabs,
-    train_data_loader, dev_data_loader,
-    train_writer, eval_writer, concept_identification_config, device)
+
+  if FLAGS.train_is_test:
+    train_model(
+        model, criterion, optimizer, FLAGS.no_epochs,
+        max_out_len, vocabs,
+        train_data_loader, train_data_loader,
+        device,
+        train_writer, eval_writer,
+	      scheduler,
+        concept_identification_config)
+  else:
+    train_model(
+      model, criterion, optimizer, FLAGS.no_epochs,
+      max_out_len, vocabs,
+      train_data_loader, dev_data_loader,
+      train_writer, eval_writer, concept_identification_config, device)
   train_writer.close()
   eval_writer.close()
 

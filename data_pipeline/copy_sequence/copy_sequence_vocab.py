@@ -45,7 +45,7 @@ class CopySequenceVocab():
             return self.token_vocab[token]
         return self.token_vocab[self.unkown_special_word]
 
-    def get_word_by_token_idx(self, idx: str):
+    def get_word_by_token_idx(self, id: int):
         """
             Get word in vocab by token id
             Args:
@@ -55,5 +55,5 @@ class CopySequenceVocab():
         """
         values = list(self.token_vocab.values())
         keys = list(self.token_vocab.keys())
-        if idx in values:
-            return keys[values.index(idx)]
+        if id in values:
+            return keys[values.index(id)]

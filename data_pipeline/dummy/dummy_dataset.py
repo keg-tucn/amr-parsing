@@ -62,7 +62,7 @@ class DummySeq2SeqDataset(Dataset):
                 add_eos(training_entry, EOS)
             # Numericalize the training entry (str -> vocab ids).
             sentence, concepts, _, adj_mat = numericalize(
-                training_entry, vocabs, None)
+                training_entry, vocabs)
             print('sentence numericalized', sentence)
             print('concepts numericalized', concepts)
             # Convert to pytorch tensors.

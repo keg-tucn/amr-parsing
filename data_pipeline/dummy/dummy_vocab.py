@@ -65,7 +65,7 @@ class DummyVocabs():
     self.concept_vocab_size = len(concept_vocab.keys())
     self.relation_vocab_size = len(relation_vocab.keys())
 
-  def get_token_idx(self, token: str):
+  def get_token_idx(self, token: str, use_shared=False):
     """
     Gives token index in vocabulary
     """
@@ -73,7 +73,7 @@ class DummyVocabs():
       return self.token_vocab[token]
     return self.token_vocab[self.unkown_special_word]
 
-  def get_concept_idx(self, concept: str):
+  def get_concept_idx(self, concept: str, use_shared=False):
     """
     Gives concept index in vocabulary
     """

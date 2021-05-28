@@ -57,8 +57,8 @@ def add_eos(training_entry: TrainingEntry, eos_token: str):
 
 def numericalize(training_entry: TrainingEntry,
                  vocabs: Vocabs,
-                 use_shared: bool,
-                 glove_embeddings: GloVeEmbeddings):
+                 use_shared: bool=False,
+                 glove_embeddings: GloVeEmbeddings=None):
   """
   Processes the train entry into lists of integeres that can be easily converted
   into tensors. For the adjacency matrix 0 will be used in case the relation

@@ -607,14 +607,14 @@ def main(_):
         train_data_loader, train_data_loader,
         device,
         train_writer, eval_writer,
-	      scheduler,
-        concept_identification_config)
+        concept_identification_config,
+        scheduler)
   else:
     train_model(
       model, criterion, optimizer, FLAGS.no_epochs,
       max_out_len, vocabs,
-      train_data_loader, dev_data_loader,
-      train_writer, eval_writer, concept_identification_config, device)
+      train_data_loader, dev_data_loader, device,
+      train_writer, eval_writer, concept_identification_config)
   train_writer.close()
   eval_writer.close()
 

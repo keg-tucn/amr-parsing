@@ -86,8 +86,6 @@ def compute_fScore(gold_outputs,
   concepts_as_list_predicted, concepts_as_list_gold = tensor_to_list(gold_outputs, predicted_outputs, eos_index,
                                                                        extended_vocab, config)
 
-  print("concepts_as_list_gold ", concepts_as_list_gold)
-  print("concepts_as_list_predicted ", concepts_as_list_predicted)
   f_score = 0
   batch_size = len(concepts_as_list_gold)
   for i in range(batch_size):
@@ -187,7 +185,7 @@ def eval_step(model: nn.Module,
     # compute extended vocab
     extended_vocab, extended_vocab_size = construct_extended_vocabulary(unnumericalized_inputs, vocabs)
 
-    # compute indices
+    # compute indices of the input sentence for the extended vocab
     indices = [[extended_vocab[t] for t in sentence] for sentence in unnumericalized_inputs]
 
     # numericalized concepts after the new vocabulary and put it on the device
@@ -246,7 +244,7 @@ def train_step(model: nn.Module,
   if config.USE_POINTER_GENERATOR:
     # initial sentence (un-numericalized)
     unnumericalized_inputs = batch['initial_sentence']
-    # compute indices
+    # compute indices of the input sentence for the extended vocab
     indices = [[vocabs.shared_vocab[t] for t in sentence] for sentence in unnumericalized_inputs]
 
   optimizer.zero_grad()
@@ -294,6 +292,7 @@ def train_model(model: nn.Module,
     batch_f_score_train = batch_f_score_train / no_batches
     fscore, dev_loss = evaluate_model(
         model, criterion, max_out_len, vocabs, dev_data_loader, config, device)
+    # gradually decrease the teacher_forcing_racio
     teacher_forcing_ratio -= step_teacher_forcing_ratio
     model.train()
     end_time = time.time()

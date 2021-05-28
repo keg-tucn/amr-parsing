@@ -8,27 +8,24 @@ from data_pipeline.dummy.dummy_vocab import DummyVocabs
 
 
 def add_eos(sentence, concepts, eos_token: str):
-    """
-      Add EOS token to DummyTrainingEntry
-    """
+    """ Add EOS token to DummyTrainingEntry """
     sentence.append(eos_token)
     concepts.append(eos_token)
 
 
 def add_bos(concepts, bos_token: str):
-    """
-      Add BOS token to DummyTrainingEntry
-    """
-    #sentence.insert(0, bos_token)
+    """Add BOS token to DummyTrainingEntry """
     concepts.insert(0, bos_token)
 
 
-def numericalize(sentence, concepts,
+def numericalize(sentence: List[str],
+                 concepts: List[str],
                  vocabs: DummyVocabs):
     """
-    Processes the train entry into lists of integeres that can be easily converted
-    into tensors
+    Processes sentence and concepts lists of integers to be converted as tensors.
     Args:
+      sentence: Sentence to be numericalized
+      concepts: Corresponding concepts to be numericalized
       vocabs: Vocabs object with the 3 vocabs (tokens, concepts, relations).
     Returns a tuple of:
       sentece: List of token indices.
@@ -48,18 +45,14 @@ class DummySeq2SeqDataset(Dataset):
     Arguments:
       sentences: dummy random sentences.
       vocabs: the 3 dummy vocabs (tokens, concepts, relations).
-      seq2seq_setting: If true only the data for the seq2seq setting is returned
-        (sequence of tokens with their lengths and concepts).
       ordered: if True the entries are ordered (decreasingly) by sentence length.
     """
 
     def __init__(self, sentences: List[str],
                  vocabs: DummyVocabs,
-                 seq2seq_setting: bool = True,
                  ordered: bool = True,
                  max_sen_len: bool = None):
         super(DummySeq2SeqDataset, self).__init__()
-        self.seq2seq_setting = seq2seq_setting
         self.sentences_list = []
         self.concepts_list = []
         self.ids = []
@@ -72,9 +65,8 @@ class DummySeq2SeqDataset(Dataset):
             concepts = [char for char in sentence[::-1]]
             tokens = [char for char in sentence]
             # Process the training entry (add EOS for sentence and concepts).
-            if self.seq2seq_setting:
-                add_eos(tokens, concepts, BOS)
-                add_bos(tokens, BOS)
+            add_eos(tokens, concepts, EOS)
+            add_bos(tokens, BOS)
             # Numericalize the training entry (str -> vocab ids).
             sentence, concepts = numericalize(
                 tokens, concepts, vocabs)
@@ -130,19 +122,12 @@ class DummySeq2SeqDataset(Dataset):
             torch_pad(s, (0, max_sen_len - len(s))) for s in batch_sentences]
         # Pad concepts
         padded_concepts = [
-            torch_pad(c, (0, max_concepts_len - len(c))) for c in batch_concepts]      
-        if self.seq2seq_setting:
-            new_batch = {
-                'sentence': torch.transpose(torch.stack(padded_sentences), 0, 1),
-                # This is left on the cpu for 'pack_padded_sequence'.
-                'sentence_lengts': torch.tensor(sentence_lengths),
-                'concepts': torch.transpose(torch.stack(padded_concepts), 0, 1)
-            }
-        else:
-            new_batch = {
-                'amr_id': amr_id,
-                'concepts': torch.transpose(torch.stack(padded_concepts), 0, 1),
-                # This is left on the cpu for 'pack_padded_sequence'.
-                'concepts_lengths': torch.tensor(concepts_lengths),
-            }
+            torch_pad(c, (0, max_concepts_len - len(c))) for c in batch_concepts]
+
+        new_batch = {
+            'sentence': torch.transpose(torch.stack(padded_sentences), 0, 1),
+            'sentence_lengts': torch.tensor(sentence_lengths),
+            'concepts': torch.transpose(torch.stack(padded_concepts), 0, 1)
+        }
+
         return new_batch

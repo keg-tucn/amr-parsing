@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from torch.nn.functional import pad as torch_pad
 from torch.optim import Optimizer
 from torch.utils.tensorboard import SummaryWriter
+from yacs.config import CfgNode
 
 from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
@@ -19,6 +20,7 @@ from data_pipeline.dataset import AMRDataset
 from config import get_default_config
 from models import Seq2seq
 from data_pipeline.glove_embeddings import GloVeEmbeddings
+from utils.extended_vocab_utils import construct_extended_vocabulary, numericalize_concepts
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('config',
@@ -31,18 +33,18 @@ flags.DEFINE_string('dev_subsets',
                     default=None,
                     help=('Train subsets split by comma. Ex: bolt,proxy'))
 flags.DEFINE_integer('batch_size',
-                     default=32,
+                     default=64,
                      short_name='b',
                      help=('Batch size.'))
 flags.DEFINE_integer('dev_batch_size',
-                     default=32,
+                     default=64,
                      help=('Dev batch size.'))
 flags.DEFINE_integer('no_epochs',
                      short_name='e',
-                     default=20,
+                     default=80,
                      help=('Number of epochs.'))
 flags.DEFINE_boolean('use_glove',
-                     default=False,
+                     default=True,
                      help=('Flag which tells whether model should use GloVe Embeddings or not.'))
 
 def compute_loss(criterion, logits, gold_outputs):
@@ -68,7 +70,8 @@ def compute_loss(criterion, logits, gold_outputs):
 
 def compute_fScore(gold_outputs,
                    predicted_outputs,
-                   vocabs: Vocabs):
+                   extended_vocab: Vocabs,
+                   config: CfgNode):
   """Computes f_score, precision, recall.
 
   Args:
@@ -79,22 +82,30 @@ def compute_fScore(gold_outputs,
     f_score
   """
 
-  eos_index= list(vocabs.concept_vocab.keys()).index(EOS)
-  concepts_as_list_predicted, concepts_as_list_gold = tensor_to_list(gold_outputs, predicted_outputs, eos_index, vocabs)
+  eos_index = list(extended_vocab.keys()).index(EOS)
+  concepts_as_list_predicted, concepts_as_list_gold = tensor_to_list(gold_outputs, predicted_outputs, eos_index,
+                                                                       extended_vocab, config)
 
-  print("concepts_as_list_gold", concepts_as_list_gold)
-  print("concepts_as_list_predicted", concepts_as_list_predicted)
+  f_score = 0
+  batch_size = len(concepts_as_list_gold)
+  for i in range(batch_size):
+    f_score_sentence = compute_sequence_fscore(concepts_as_list_gold[i], concepts_as_list_predicted[i])
+    f_score += f_score_sentence
 
-  true_positive = len(set(concepts_as_list_gold) & set(concepts_as_list_predicted))
-  false_positive = len(set(concepts_as_list_predicted).difference(set(concepts_as_list_gold)))
-  false_negative = len(set(concepts_as_list_gold).difference(set(concepts_as_list_predicted)))
-  precision = 0
-  recall = 0
-  print(f'tp = {true_positive}, fn = {false_negative}, fp = {false_positive}')
+  f_score = f_score / batch_size
+  return f_score
 
-  if len(concepts_as_list_predicted) != 0:
-    precision = true_positive / (true_positive + false_positive)
-    recall = true_positive / (true_positive + false_negative)
+
+def compute_sequence_fscore(gold_sequence, predicted_sequence):
+  if len(predicted_sequence) == 0:
+    return 0
+
+  true_positive = len(set(gold_sequence) & set(predicted_sequence))
+  false_positive = len(set(predicted_sequence).difference(set(gold_sequence)))
+  false_negative = len(set(gold_sequence).difference(set(predicted_sequence)))
+
+  precision = true_positive / (true_positive + false_positive)
+  recall = true_positive / (true_positive + false_negative)
   f_score = 0
 
   if precision + recall != 0:
@@ -102,19 +113,19 @@ def compute_fScore(gold_outputs,
 
   return f_score
 
-
 def tensor_to_list(gold_outputs,
                    predicted_outputs,
                    eos_index,
-                   vocabs:Vocabs):
+                   extended_vocab,
+                   config: CfgNode):
   # Extract padding from original outputs
   gold_list_no_padding = extract_padding(gold_outputs, eos_index)
   predicted_list_no_padding = extract_padding(predicted_outputs, eos_index)
 
   # Remove UNK from the sequence
   # TODO store the gold data before numericalization and use it here
-  concepts_as_list_gold = indices_to_words(gold_list_no_padding, vocabs)
-  concepts_as_list_predicted = indices_to_words(predicted_list_no_padding, vocabs)
+  concepts_as_list_gold = indices_to_words(gold_list_no_padding, extended_vocab, config)
+  concepts_as_list_predicted = indices_to_words(predicted_list_no_padding, extended_vocab, config)
 
   return concepts_as_list_predicted, concepts_as_list_gold
 
@@ -140,11 +151,21 @@ def extract_padding(outputs, eos_index):
 
 
 def indices_to_words(outputs_no_padding,
-                     vocabs: Vocabs):
-  ids_to_concepts_list = list(vocabs.concept_vocab.keys())
-  concepts_as_list = [ids_to_concepts_list[int(id)]\
-                        for sentence in outputs_no_padding for id in sentence\
-                        if ids_to_concepts_list[int(id)] != UNK]
+                     extended_vocab,
+                     config: CfgNode):
+
+  if config.USE_POINTER_GENERATOR:
+    vocab = extended_vocab
+  else:
+    vocab = extended_vocab.concept_vocab
+
+  ids_to_concepts_list = list(vocab.keys())
+  concepts_as_list = []
+  for sentence in outputs_no_padding:
+    concepts = []
+    for id in sentence:
+        if ids_to_concepts_list[int(id)] != UNK: concepts.append(ids_to_concepts_list[int(id)])
+    concepts_as_list.append(concepts)
   return concepts_as_list
 
 
@@ -152,14 +173,33 @@ def eval_step(model: nn.Module,
               criterion: nn.Module,
               max_out_len: int,
               vocabs: Vocabs,
-              batch: Dict[str, torch.tensor]):
+              batch: Dict[str, torch.tensor],
+              config: CfgNode, device):
   inputs = batch['sentence']
   inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts']
 
-  logits, predictions = model(inputs, inputs_lengths, max_out_length=max_out_len)
+  if config.USE_POINTER_GENERATOR:
+    unnumericalized_inputs = batch['initial_sentence']
+    unnumericalized_concepts = batch['concepts_string']
+    # compute extended vocab
+    extended_vocab, extended_vocab_size = construct_extended_vocabulary(unnumericalized_inputs, vocabs)
 
-  f_score = compute_fScore(gold_outputs, predictions, vocabs)
+    # compute indices
+    indices = [[extended_vocab[t] for t in sentence] for sentence in unnumericalized_inputs]
+
+    # numericalized concepts after the new vocabulary and put it on the device
+    gold_outputs = numericalize_concepts(extended_vocab, unnumericalized_concepts).to(device)
+
+    logits, predictions = model(inputs, inputs_lengths,
+                                    extended_vocab_size, torch.as_tensor(indices),
+                                    max_out_length=max_out_len)
+    f_score = compute_fScore(gold_outputs, predictions, extended_vocab, config)
+  else:
+    logits, predictions = model(inputs, inputs_lengths,
+                                    max_out_length=max_out_len)
+
+    f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab, config)
 
   gold_output_len = gold_outputs.shape[0]
   padded_gold_outputs = torch_pad(
@@ -172,14 +212,16 @@ def evaluate_model(model: nn.Module,
                    criterion: nn.Module,
                    max_out_len: int,
                    vocabs: Vocabs,
-                   data_loader: DataLoader):
+                   data_loader: DataLoader,
+                   config: CfgNode,
+                   device):
   model.eval()
   with torch.no_grad():
     epoch_f_score = 0
     epoch_loss = 0
     no_batches = 0
     for batch in data_loader:
-      f_score_epoch, loss = eval_step(model, criterion, max_out_len, vocabs, batch)
+      f_score_epoch, loss = eval_step(model, criterion, max_out_len, vocabs, batch, config, device)
       epoch_f_score += f_score_epoch
       epoch_loss += loss
       no_batches += 1
@@ -191,17 +233,36 @@ def evaluate_model(model: nn.Module,
 def train_step(model: nn.Module,
                criterion: nn.Module,
                optimizer: Optimizer,
-               batch: Dict[str, torch.Tensor]):
+               batch: Dict[str, torch.Tensor],
+               vocabs: Vocabs,
+               config: CfgNode,
+               teacher_forcing_ratio: float):
   inputs = batch['sentence']
   inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts']
 
+  if config.USE_POINTER_GENERATOR:
+    # initial sentence (un-numericalized)
+    unnumericalized_inputs = batch['initial_sentence']
+    print("unnumericalized_inputs ", unnumericalized_inputs)
+    # compute indices
+    indices = [[vocabs.shared_vocab[t] for t in sentence] for sentence in unnumericalized_inputs]
+
   optimizer.zero_grad()
-  logits, predictions = model(inputs, inputs_lengths, gold_outputs)
+  if config.USE_POINTER_GENERATOR:
+    logits, predictions = model(inputs, inputs_lengths,
+                                    vocabs.shared_vocab_size, torch.as_tensor(indices),
+                                    teacher_forcing_ratio, gold_outputs)
+  else:
+    logits, predictions = model(inputs, inputs_lengths,
+                                teacher_forcing_ratio=teacher_forcing_ratio,
+                                gold_output_sequence=gold_outputs)
+
+  f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab, config)
   loss = compute_loss(criterion, logits, gold_outputs)
   loss.backward()
   optimizer.step()
-  return loss
+  return loss, f_score
 
 def train_model(model: nn.Module,
                 criterion: nn.Module,
@@ -212,42 +273,59 @@ def train_model(model: nn.Module,
                 train_data_loader: DataLoader,
                 dev_data_loader: DataLoader,
                 train_writer: SummaryWriter,
-                eval_writer: SummaryWriter):
+                eval_writer: SummaryWriter,
+                config: CfgNode,
+                device):
   model.train()
+  teacher_forcing_ratio = 1
+  step_teacher_forcing_ratio = teacher_forcing_ratio / no_epochs
   for epoch in range(no_epochs):
     start_time = time.time()
-    i = 0
     epoch_loss = 0
     no_batches = 0
+    batch_f_score_train = 0
     for batch in train_data_loader:
-        batch_loss = train_step(model, criterion, optimizer, batch)
+        batch_loss, f_score_train = train_step(model, criterion, optimizer, batch, vocabs, config, teacher_forcing_ratio)
+        batch_f_score_train += f_score_train
         epoch_loss += batch_loss
         no_batches += 1
     epoch_loss = epoch_loss / no_batches
+    batch_f_score_train = batch_f_score_train / no_batches
     fscore, dev_loss = evaluate_model(
-        model, criterion, max_out_len, vocabs, dev_data_loader)
+        model, criterion, max_out_len, vocabs, dev_data_loader, config, device)
+    teacher_forcing_ratio -= step_teacher_forcing_ratio
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time
     print('Epoch {} (took {:.2f} seconds)'.format(epoch + 1, time_passed))
-    print('Train loss: {}, dev loss: {}, f-score {}'.format(epoch_loss, dev_loss, fscore))
+    print('Train loss: {}, dev loss: {}, f_score_train: {}, f-score: {}'.format(epoch_loss, dev_loss, batch_f_score_train, fscore))
     train_writer.add_scalar('loss', epoch_loss, epoch)
     eval_writer.add_scalar('loss', dev_loss, epoch)
     eval_writer.add_scalar('f-score', fscore, epoch)
+    train_writer.add_scalar('f-score', batch_f_score_train, epoch)
 
 def main(_):
   #TODO: move to new file.
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   print('Training on device', device)
 
+  # Construct config object.
+  cfg = get_default_config()
+  if FLAGS.config:
+    config_file_name = FLAGS.config
+    config_path = os.path.join('configs', config_file_name)
+    cfg.merge_from_file(config_path)
+    cfg.freeze()
+
+  concept_identification_config = cfg.CONCEPT_IDENTIFICATION.LSTM_BASED
+
   if FLAGS.train_subsets is None:
-    train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-                      'mt09sdl', 'proxy', 'wb', 'xinhua']
+    train_subsets = ['bolt']
   else:
     # Take subsets from flag passed.
     train_subsets = FLAGS.train_subsets.split(',')
   if FLAGS.dev_subsets is None:
-    dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+    dev_subsets = ['bolt']
   else:
     # Take subsets from flag passed.
     dev_subsets = FLAGS.dev_subsets.split(',')
@@ -255,17 +333,24 @@ def main(_):
   train_paths = get_paths('training', train_subsets)
   dev_paths = get_paths('dev', dev_subsets)
 
-  # Construct config object.
-  cfg = get_default_config()
-
   special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
   vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))
-  glove_embeddings = GloVeEmbeddings(cfg.CONCEPT_IDENTIFICATION.LSTM_BASED, UNK, [PAD, EOS, UNK]) \
-    if FLAGS.use_glove else None
+  glove_embeddings = GloVeEmbeddings(concept_identification_config.GLOVE_EMB_DIM, UNK, [PAD, EOS, UNK]) \
+  if FLAGS.use_glove else None
+
+  if concept_identification_config.USE_POINTER_GENERATOR:
+    use_shared = True
+    input_vocab_size = vocabs.shared_vocab_size
+    output_vocab_size = vocabs.shared_vocab_size
+  else:
+    use_shared = False
+    input_vocab_size = vocabs.token_vocab_size
+    output_vocab_size = vocabs.concept_vocab_size
+
   train_dataset = AMRDataset(
-    train_paths, vocabs, device, seq2seq_setting=True, ordered=True, glove=glove_embeddings)
+    train_paths, vocabs, device, seq2seq_setting=True, ordered=True, use_shared=use_shared, glove=glove_embeddings)
   dev_dataset = AMRDataset(
-    dev_paths, vocabs, device, seq2seq_setting=True, ordered=True, glove=glove_embeddings)
+    dev_paths, vocabs, device, seq2seq_setting=True, ordered=True, use_shared=use_shared, glove=glove_embeddings)
   max_out_len = train_dataset.max_concepts_length
 
   train_data_loader = DataLoader(
@@ -275,16 +360,10 @@ def main(_):
     dev_dataset, batch_size=FLAGS.dev_batch_size,
     collate_fn=dev_dataset.collate_fn)
 
-  if FLAGS.config:
-    config_file_name = FLAGS.config
-    config_path = os.path.join('configs', config_file_name)
-    cfg.merge_from_file(config_path)
-    cfg.freeze()
-
   model = Seq2seq(
-    vocabs.token_vocab_size,
-    vocabs.concept_vocab_size,
-    cfg.CONCEPT_IDENTIFICATION.LSTM_BASED,
+    input_vocab_size,
+    output_vocab_size,
+    concept_identification_config,
     glove_embeddings.embeddings_vocab if FLAGS.use_glove else None,
     device=device).to(device)
   optimizer = optim.Adam(model.parameters())
@@ -300,7 +379,7 @@ def main(_):
     model, criterion, optimizer, FLAGS.no_epochs,
     max_out_len, vocabs,
     train_data_loader, dev_data_loader,
-    train_writer, eval_writer)
+    train_writer, eval_writer, concept_identification_config, device)
   train_writer.close()
   eval_writer.close()
 

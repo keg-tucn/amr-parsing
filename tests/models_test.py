@@ -18,6 +18,7 @@ class ModelsTest(absltest.TestCase):
     character_level_embedding = CharacterLevelEmbedding(cfg.CONCEPT_IDENTIFICATION.LSTM_BASED)
     outputs = character_level_embedding(inputs, inputs_lengths)
     expected_output_shape = (input_seq_len, batch_size, cfg.CONCEPT_IDENTIFICATION.LSTM_BASED.CHAR_HIDDEN_SIZE)
+
     self.assertEqual(outputs.shape, expected_output_shape)
 
   def test_encoder(self):

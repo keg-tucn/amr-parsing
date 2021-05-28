@@ -30,6 +30,25 @@ CONCEPTS_LEN_KEY = 'concepts_lengths'
 ADJ_MAT_KEY = 'adj_mat'
 AMR_STR_KEY = 'amr_str'
 
+def pad_string_sequnece(batch_sequnece_strings, max_seq_len):
+  """
+     Adds padding to a batch of string sequences
+
+     Args:
+        batch_sequnece_strings: the set of sentances that need padding
+        max_seq_len: the length of the longest sequence in the batch
+
+     Returns:
+        padded_sequences: the set of padded string sequences
+  """
+  padded_sequences = []
+  for sequence in batch_sequnece_strings:
+    padded_sequence = copy.deepcopy(sequence)
+    for i in range(max_seq_len - len(sequence)):
+      padded_sequence.append(PAD)
+    padded_sequences.append(padded_sequence)
+  return padded_sequences
+
 def add_eos(training_entry: TrainingEntry, eos_token: str):
   training_entry.sentence.append(eos_token)
   training_entry.concepts.append(eos_token)
@@ -206,23 +225,12 @@ class AMRDataset(Dataset):
     padded_sentences = [
       torch_pad(s, (0, max_sen_len - len(s))) for s in batch_sentences]
     # Pad initial sentences.
-    padded_initial_sentences = []
-    for sentence in batch_sentences_strings:
-        padded_sentence = copy.deepcopy(sentence)
-        for i in range(max_sen_str_len - len(sentence)):
-            padded_sentence.append(PAD)
-        padded_initial_sentences.append(padded_sentence)
-
+    padded_initial_sentences = pad_string_sequnece(batch_sentences_strings, max_sen_str_len)
     # Pad concepts
     padded_concepts = [
       torch_pad(c, (0, max_concepts_len - len(c))) for c in batch_concepts]
-
-    padded_concepts_string = []
-    for concepts in batch_concepts_strings:
-        padded_concept = copy.deepcopy(concepts)
-        for i in range(max_concepts_str_len - len(concepts)):
-            padded_concept.append(PAD)
-        padded_concepts_string.append(padded_concept)
+    # Pad concepts string sequence.
+    padded_concepts_string  = pad_string_sequnece(batch_concepts_strings, max_concepts_str_len)
     # Pad glove concepts
     padded_glove_concepts = [
         torch_pad(c, (0, max_glove_concepts_len - len(c))) for c in batch_glove_concepts]

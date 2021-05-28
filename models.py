@@ -209,7 +209,9 @@ class DecoderStep(nn.Module):
       encoder_states: Encoder outputs with shape
         (input seq len, batch size, hidden size).
       attention_mask: Attention mask (batch size, input seq len).
-      indices: indices of each word in the input corresponding to the extended vocab.
+      indices: the index of each word in the input sequence corresponding to the
+        extended vocab. This is needed in order to compute the probability for oov
+        words that appeared in source sequence.
       extended_vocab_size: the size of the extended vocab.
       batch_size: the batch size.
       device: the device the model is running on.
@@ -307,7 +309,9 @@ class Decoder(nn.Module):
         (num_enc_layers, batch size, hidden size).
       attention_mask: Attention mask (tensor of bools), shape
         (batch size, input seq len).
-      indices of each word in the input corresponding to the extended vocab.
+      indices: the index of each word in the input sequence corresponding to the
+        extended vocab. This is needed in order to compute the probability for oov
+        words that appeared in source sequence.
       decoder_inputs (torch.Tensor): Decoder input for each step, with shape
         (output seq len, batch size). These should be sent on the train flow,
         and consist of the gold output sequence. On the inference flow, they
@@ -328,6 +332,8 @@ class Decoder(nn.Module):
     previous_token = torch.full((batch_size,), BOS_IDX).to(device=self.device)
 
     if self.config.USE_POINTER_GENERATOR:
+      # When using pointer generator we also need the words in the input sequence
+      # therefore we use the extended vocab
       all_logits_vocab_size = extended_vocab_size
     else:
       all_logits_vocab_size = self.output_vocab_size

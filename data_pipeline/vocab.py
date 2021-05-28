@@ -139,6 +139,7 @@ class Vocabs():
    This method creates the shared vocabulary between input and output.
    This is done by merging the input and output vocabularies.
    We use the convention that the input tokens comes first.
+   This is needed for pointer generator.
    :return: the shared vocabulary
    """
    shared_vocab = deepcopy(self.token_vocab)

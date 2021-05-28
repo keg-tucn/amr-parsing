@@ -14,15 +14,17 @@ from data_pipeline.data_reading import extract_triples, get_paths
 from data_pipeline.vocab import Vocabs
 from data_pipeline.glove_embeddings import GloVeEmbeddings
 
-PAD = '<pad>' 
+PAD = '<pad>'
 UNK = '<unk>'
 EOS = '<eos>'
 PAD_IDX = 0
 
 AMR_ID_KEY = 'amr_id'
 SENTENCE_KEY = 'sentence'
+SENTENCE_STR_KEY = 'initial_sentence'
 SENTENCE_LEN_KEY = 'sentence_lengts'
 CONCEPTS_KEY = 'concepts'
+CONCEPTS_STR_KEY = 'concepts_string'
 GLOVE_CONCEPTS_KEY = 'glove_concepts'
 CONCEPTS_LEN_KEY = 'concepts_lengths'
 ADJ_MAT_KEY = 'adj_mat'
@@ -34,6 +36,7 @@ def add_eos(training_entry: TrainingEntry, eos_token: str):
 
 def numericalize(training_entry: TrainingEntry,
                  vocabs: Vocabs,
+                 use_shared: bool,
                  glove_embeddings: GloVeEmbeddings):
   """
   Processes the train entry into lists of integeres that can be easily converted
@@ -41,15 +44,20 @@ def numericalize(training_entry: TrainingEntry,
   does not exist (is None).
   Args:
     vocabs: Vocabs object with the 3 vocabs (tokens, concepts, relations).
+    use_shared: a flag telling us whether to use the shared vocabulary or
+    the concept vocabulary and token vocabulary separately.
+    This depends if the pointer generator is used or not.
+    glove_embeddings: pertained Glove embeddings
   Returns a tuple of:
     sentece: List of token indices.
     concepts: List of concept indices.
+    glove_embeddings: List of pertained Glove embeddings indices.
     adj_mat: Adjacency matrix which contains arc labels indices in the vocab.
   """
   # Process sentence.
-  processed_sentence = [vocabs.get_token_idx(t) for t in training_entry.sentence]
+  processed_sentence = [vocabs.get_token_idx(t, use_shared) for t in training_entry.sentence]
   # Process concepts.
-  processed_concepts = [vocabs.get_concept_idx(c) for c in training_entry.concepts]
+  processed_concepts = [vocabs.get_concept_idx(c, use_shared) for c in training_entry.concepts]
   # Process glove concepts.
   processed_glove_concepts = [glove_embeddings.get_glove_concept_idx(c) for c in training_entry.concepts] \
     if glove_embeddings != None else []
@@ -94,6 +102,7 @@ class AMRDataset(Dataset):
   def __init__(self, paths: List[str], vocabs: Vocabs,
                device: str, seq2seq_setting: bool,
                ordered: bool,
+               use_shared: bool = False,
                max_sen_len: int = None,
                glove: GloVeEmbeddings = None):
     super(AMRDataset, self).__init__()
@@ -120,12 +129,14 @@ class AMRDataset(Dataset):
         if self.seq2seq_setting:
           add_eos(training_entry, EOS)
         # Numericalize the training entry (str -> vocab ids).
-        sentence, concepts, glove_concepts, adj_mat = numericalize(training_entry, vocabs, glove)
+        sentence, concepts, glove_concepts, adj_mat = numericalize(training_entry, vocabs, use_shared, glove)
         # Collect the data.
         self.ids.append(id)
         field = {
           SENTENCE_KEY: torch.tensor(sentence, dtype=torch.long),
+          SENTENCE_STR_KEY: training_entry.sentence,
           CONCEPTS_KEY: torch.tensor(concepts, dtype=torch.long),
+          CONCEPTS_STR_KEY: training_entry.concepts,
           GLOVE_CONCEPTS_KEY: torch.tensor(glove_concepts, dtype=torch.long),
           ADJ_MAT_KEY: torch.tensor(adj_mat, dtype=torch.long),
           AMR_STR_KEY: amr_str_no_align
@@ -150,29 +161,35 @@ class AMRDataset(Dataset):
     return len(self.ids)
 
   def __getitem__(self, item):
-    """Returns: id, sentence, concepts, adj_mat, amr_str."""
+    """Returns: id, sentence, sentence_str, concepts, concepts_str, adj_mat, amr_str."""
     id = self.ids[item]
     sentence = self.fields_by_id[id][SENTENCE_KEY]
+    sentence_str = self.fields_by_id[id][SENTENCE_STR_KEY]
     concepts = self.fields_by_id[id][CONCEPTS_KEY]
+    concepts_str = self.fields_by_id[id][CONCEPTS_STR_KEY]
     glove_concepts = self.fields_by_id[id][GLOVE_CONCEPTS_KEY]
     adj_mat = self.fields_by_id[id][ADJ_MAT_KEY]
     amr_str = self.fields_by_id[id][AMR_STR_KEY]
-    return id, sentence, concepts, glove_concepts, adj_mat, amr_str
+    return id, sentence, sentence_str, concepts, concepts_str, glove_concepts, adj_mat, amr_str
 
   def collate_fn(self, batch):
     amr_ids = []
     batch_sentences = []
+    batch_sentences_strings = []
     batch_concepts = []
+    batch_concepts_strings = []
     batch_glove_concepts = []
     batch_adj_mats = []
     amr_strings = []
     sentence_lengths = []
     concepts_lengths = []
     for entry in batch:
-      amr_id, sentence, concepts, glove_concepts, adj_mat, amr_str = entry
+      amr_id, sentence, sentence_str, concepts, concepts_str, glove_concepts, adj_mat, amr_str = entry
       amr_ids.append(amr_id)
       batch_sentences.append(sentence)
+      batch_sentences_strings.append(sentence_str)
       batch_concepts.append(concepts)
+      batch_concepts_strings.append(concepts_str)
       batch_glove_concepts.append(glove_concepts)
       batch_adj_mats.append(adj_mat)
       amr_strings.append(amr_str)
@@ -180,38 +197,57 @@ class AMRDataset(Dataset):
       concepts_lengths.append(len(concepts))
     # Get max lengths for padding.
     max_sen_len = max([len(s) for s in batch_sentences])
+    max_sen_str_len = max([len(s) for s in batch_sentences_strings])
     max_concepts_len = max([len(s) for s in batch_concepts])
+    max_concepts_str_len = max([len(s) for s in batch_concepts_strings])
     max_glove_concepts_len = max([len(s) for s in batch_glove_concepts])
     max_adj_mat_size = max([len(s) for s in batch_adj_mats])
     # Pad sentences.
     padded_sentences = [
       torch_pad(s, (0, max_sen_len - len(s))) for s in batch_sentences]
+    # Pad initial sentences.
+    padded_initial_sentences = []
+    for sentence in batch_sentences_strings:
+        padded_sentence = copy.deepcopy(sentence)
+        for i in range(max_sen_str_len - len(sentence)):
+            padded_sentence.append(PAD)
+        padded_initial_sentences.append(padded_sentence)
+
     # Pad concepts
     padded_concepts = [
       torch_pad(c, (0, max_concepts_len - len(c))) for c in batch_concepts]
+
+    padded_concepts_string = []
+    for concepts in batch_concepts_strings:
+        padded_concept = copy.deepcopy(concepts)
+        for i in range(max_concepts_str_len - len(concepts)):
+            padded_concept.append(PAD)
+        padded_concepts_string.append(padded_concept)
     # Pad glove concepts
     padded_glove_concepts = [
-      torch_pad(c, (0, max_glove_concepts_len - len(c))) for c in batch_glove_concepts]
+        torch_pad(c, (0, max_glove_concepts_len - len(c))) for c in batch_glove_concepts]
     # Pad adj matrices (pad on both dimensions).
     padded_adj_mats = []
     for adj_mat in batch_adj_mats:
       # Since it's a square matrix, the padding is the same on both dimensions.
       pad_size = max_adj_mat_size - len(adj_mat[0])
       padded_adj_mats.append(torch_pad(adj_mat, (0, pad_size, 0, pad_size)))
-    #TODO: maybe by default do not put (seq_len, batch size) but have some
+    # TODO: maybe by default do not put (seq_len, batch size) but have some
     # processing method for doing so after loading the data.
     if self.seq2seq_setting:
       new_batch = {
-        SENTENCE_KEY: torch.transpose(torch.stack(padded_sentences),0,1).to(self.device),
+        SENTENCE_KEY: torch.transpose(torch.stack(padded_sentences), 0, 1).to(self.device),
         # This is left on the cpu for 'pack_padded_sequence'.
+        SENTENCE_STR_KEY: padded_initial_sentences,
         SENTENCE_LEN_KEY: torch.tensor(sentence_lengths),
-        CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts),0,1).to(self.device)
+        CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts), 0, 1).to(self.device),
+        CONCEPTS_STR_KEY: padded_concepts_string
       }
     else:
       new_batch = {
         AMR_ID_KEY: amr_ids,
-        CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts),0,1),
-        GLOVE_CONCEPTS_KEY: torch.transpose(torch.stack(padded_glove_concepts),0,1),
+        CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts), 0, 1),
+        GLOVE_CONCEPTS_KEY: torch.transpose(torch.stack(padded_glove_concepts), 0, 1),
         # This is left on the cpu for 'pack_padded_sequence'.
         CONCEPTS_LEN_KEY: torch.tensor(concepts_lengths),
         ADJ_MAT_KEY: torch.stack(padded_adj_mats),
@@ -226,11 +262,11 @@ if __name__ == "__main__":
   paths = get_paths('training', subsets)
 
   #TODO: a special token like 'no-relation' instead of None.
-  special_words = ([PAD, UNK], [PAD, UNK], [PAD, UNK, None])
+  special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
   vocabs = Vocabs(paths, UNK, special_words, min_frequencies=(1, 1, 1))
 
   dataset = AMRDataset(paths, vocabs, device='cpu', seq2seq_setting=False, ordered=True)
-  
+
   #TODO: see if thr bactching could somehow be done by size (one option
   # would be to order the elements in the dataset, have fixed batches and
   # somehow shuffle the batches instead of the elements themselves).

@@ -149,6 +149,7 @@ def compute_sequence_fscore(gold_sequence, predicted_sequence):
 
   return f_score
 
+
 def tensor_to_list(gold_outputs,
                    predicted_outputs,
                    eos_index,
@@ -328,7 +329,7 @@ def train_model(model: nn.Module,
     batch_f_score_train = 0
     print("Training...")
     for batch in train_data_loader:
-        batch_loss, f_score_train = train_step(model, criterion, optimizer, batch, vocabs, config, teacher_forcing_ratio)
+        batch_loss, f_score_train = train_step(model, criterion, optimizer, batch, vocabs, config, device, teacher_forcing_ratio)
         batch_f_score_train += f_score_train
         epoch_loss += batch_loss
         no_batches += 1
@@ -397,8 +398,8 @@ def generate_sentences(len: int):
     all_sentences_dev.append(sentence)
   print("all dev sentences", all_sentences_dev)
 
-  special_words = ([PAD, BOS, EOS, UNK], [PAD, BOS, EOS, UNK], [PAD, BOS, EOS])
-  vocabs = DummyVocabs(all_sentences, UNK, special_words, min_frequencies=(1, 1, 1))
+  special_words = ([PAD, BOS, EOS, UNK], [PAD, BOS, EOS, UNK])
+  vocabs = DummyVocabs(all_sentences, UNK, special_words, min_frequencies=(1, 1))
 
   return all_sentences, all_sentences_dev, vocabs
 
@@ -572,6 +573,7 @@ def main(_):
                              device,
                              concept_identification_config,
                              tensorboard_dir)
+
     model = TransformerSeq2Seq(vocabs.token_vocab_size,
                                vocabs.concept_vocab_size,
                                bos_index,
@@ -611,10 +613,11 @@ def main(_):
         scheduler)
   else:
     train_model(
-      model, criterion, optimizer, FLAGS.no_epochs,
-      max_out_len, vocabs,
-      train_data_loader, dev_data_loader, device,
-      train_writer, eval_writer, concept_identification_config)
+        model, criterion, optimizer, FLAGS.no_epochs,
+        max_out_len, vocabs,
+        train_data_loader, dev_data_loader,
+        device,
+        train_writer, eval_writer, concept_identification_config)
   train_writer.close()
   eval_writer.close()
 

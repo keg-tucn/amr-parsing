@@ -592,7 +592,7 @@ def main(_):
     model = Seq2seq(
       input_vocab_size,
       output_vocab_size,
-      concept_identification_config,
+      concept_identification_config.LSTM_BASED,
       glove_embeddings.embeddings_vocab if FLAGS.use_glove else None,
       device=device).to(device)
     tensorboard_dir = 'temp/concept_identification'

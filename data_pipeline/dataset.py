@@ -57,8 +57,8 @@ def add_eos(training_entry: TrainingEntry, eos_token: str):
 
 def numericalize(training_entry: TrainingEntry,
                  vocabs: Vocabs,
-                 use_shared: bool=False,
-                 glove_embeddings: GloVeEmbeddings=None):
+                 use_shared: bool = False,
+                 glove_embeddings: GloVeEmbeddings = None):
   """
   Processes the train entry into lists of integeres that can be easily converted
   into tensors. For the adjacency matrix 0 will be used in case the relation
@@ -246,12 +246,13 @@ class AMRDataset(Dataset):
     # processing method for doing so after loading the data.
     if self.seq2seq_setting:
       new_batch = {
-        SENTENCE_KEY: torch.transpose(torch.stack(padded_sentences),0,1),
+        SENTENCE_KEY: torch.transpose(torch.stack(padded_sentences),0, 1),
         # This is left on the cpu for 'pack_padded_sequence'.
         SENTENCE_STR_KEY: padded_initial_sentences,
         SENTENCE_LEN_KEY: torch.tensor(sentence_lengths),
-        CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts),0,1)
-      }
+        CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts),0, 1),
+        CONCEPTS_STR_KEY: padded_concepts_string
+        }
     else:
       new_batch = {
         AMR_ID_KEY: amr_ids,

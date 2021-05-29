@@ -140,8 +140,13 @@ def compute_sequence_fscore(gold_sequence, predicted_sequence):
   false_positive = len(set(predicted_sequence).difference(set(gold_sequence)))
   false_negative = len(set(gold_sequence).difference(set(predicted_sequence)))
 
-  precision = true_positive / (true_positive + false_positive)
-  recall = true_positive / (true_positive + false_negative)
+  if true_positive + false_positive != 0:
+    precision = true_positive / (true_positive + false_positive)
+  if true_positive + false_negative != 0:
+    recall = true_positive / (true_positive + false_negative)
+  else:
+    precision = 0
+    recall = 0
   f_score = 0
 
   if precision + recall != 0:
@@ -188,13 +193,9 @@ def extract_padding(outputs, eos_index):
 
 
 def indices_to_words(outputs_no_padding,
-                     extended_vocab,
+                     vocab,
                      config: CfgNode):
 
-  if config.LSTM_BASED.USE_POINTER_GENERATOR:
-    vocab = extended_vocab
-  else:
-    vocab = extended_vocab.concept_vocab
 
   ids_to_concepts_list = list(vocab.keys())
   concepts_as_list = []
@@ -237,7 +238,7 @@ def eval_step(model: nn.Module,
     logits, predictions = model(inputs, inputs_lengths,
                                     max_out_length=max_out_len)
 
-    f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab, config)
+    f_score = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab, config)
 
   gold_output_len = gold_outputs.shape[0]
   padded_gold_outputs = torch_pad(
@@ -291,12 +292,13 @@ def train_step(model: nn.Module,
     logits, predictions = model(inputs, inputs_lengths,
                                     vocabs.shared_vocab_size, torch.as_tensor(indices),
                                     teacher_forcing_ratio, gold_outputs)
+    f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab, config)
   else:
     logits, predictions = model(inputs, inputs_lengths,
                                 teacher_forcing_ratio=teacher_forcing_ratio,
                                 gold_output_sequence=gold_outputs)
+    f_score = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab, config)
 
-  f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab, config)
   loss = compute_loss(criterion, logits, gold_outputs)
   loss.backward()
   nn.utils.clip_grad_norm_(model.parameters(), 0.5)
@@ -613,11 +615,11 @@ def main(_):
         scheduler)
   else:
     train_model(
-        model, criterion, optimizer, FLAGS.no_epochs,
-        max_out_len, vocabs,
-        train_data_loader, dev_data_loader,
-        device,
-        train_writer, eval_writer, concept_identification_config)
+      model, criterion, optimizer, FLAGS.no_epochs,
+      max_out_len, vocabs,
+      train_data_loader, dev_data_loader,
+      device,
+      train_writer, eval_writer, concept_identification_config)
   train_writer.close()
   eval_writer.close()
 

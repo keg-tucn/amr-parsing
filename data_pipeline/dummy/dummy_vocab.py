@@ -69,22 +69,8 @@ class DummyVocabs():
         sentences, special_words, min_frequencies)
     self.token_vocab = token_vocab
     self.concept_vocab = concept_vocab
-    self.shared_vocab = self.create_shared_vocab()
-    self.shared_vocab_size = len(self.shared_vocab.keys())
     self.token_vocab_size = len(token_vocab.keys())
     self.concept_vocab_size = len(concept_vocab.keys())
-
-  def create_shared_vocab(self):
-   """
-   Creates the shared vocabulary between input and output.
-   """
-   shared_vocab = deepcopy(self.token_vocab)
-   new_index = len(shared_vocab.items())
-   for concept in self.concept_vocab.keys():
-        if concept not in shared_vocab.keys():
-            shared_vocab[concept] = new_index
-            new_index += 1
-   return shared_vocab
 
   def get_token_idx(self, token: str, use_shared = False):
     """

@@ -31,9 +31,7 @@ def numericalize(sentence: List[str],
       sentece: List of token indices.
       concepts: List of concept indices.
     """
-    # Process sentence.
     processed_sentence = [vocabs.get_token_idx(t) for t in sentence]
-    # Process concepts.
     processed_concepts = [vocabs.get_concept_idx(c) for c in concepts]
     return processed_sentence, processed_concepts
 
@@ -44,38 +42,34 @@ class DummySeq2SeqDataset(Dataset):
     of concepts and adjacency matrix.
     Arguments:
       sentences: dummy random sentences.
-      vocabs: the 3 dummy vocabs (tokens, concepts, relations).
+      vocabs: the 2 dummy vocabs (tokens, concepts).
       ordered: if True the entries are ordered (decreasingly) by sentence length.
+      max_sen_len: maximum sentence length
     """
 
     def __init__(self, sentences: List[str],
                  vocabs: DummyVocabs,
                  ordered: bool = True,
-                 max_sen_len: bool = None):
+                 max_sen_len: int = None):
         super(DummySeq2SeqDataset, self).__init__()
         self.sentences_list = []
         self.concepts_list = []
         self.ids = []
-        self.amr_strings_by_id = {}
         i = 0
         for sentence in sentences:
             print("dummy sentence: ", sentence)
-            self.amr_strings_by_id[i] = []
             i = i + 1
             concepts = [char for char in sentence[::-1]]
             tokens = [char for char in sentence]
             # Process the training entry (add EOS for sentence and concepts).
             add_eos(tokens, concepts, EOS)
             add_bos(tokens, BOS)
-            # Numericalize the training entry (str -> vocab ids).
-            sentence, concepts = numericalize(
-                tokens, concepts, vocabs)
+            sentence, concepts = numericalize(tokens, concepts, vocabs)
             print('sentence numericalized', sentence)
             print('concepts numericalized', concepts)
             # Convert to pytorch tensors.
             sentence = torch.tensor(sentence, dtype=torch.long)
             concepts = torch.tensor(concepts, dtype=torch.long)
-            # Collect the data.
             self.ids.append(i)
             self.sentences_list.append(sentence)
             self.concepts_list.append(concepts)
@@ -93,7 +87,6 @@ class DummySeq2SeqDataset(Dataset):
                 self.sentences_list[i] for i in range(len(lengths)) if lengths[i] <= max_sen_len]
             self.concepts_list = [
                 self.concepts_list[i] for i in range(len(lengths)) if lengths[i] <= max_sen_len]
-        # Get max no of concepts.
         concept_lengths = [len(c) for c in self.concepts_list]
         self.max_concepts_length = max(concept_lengths)
 
@@ -101,9 +94,11 @@ class DummySeq2SeqDataset(Dataset):
         return len(self.sentences_list)
 
     def __getitem__(self, item):
+        """Returns: id, sentence, concepts"""
         return self.ids[item], self.sentences_list[item], self.concepts_list[item]
 
     def collate_fn(self, batch):
+        """Splits sentences into batches"""
         batch_sentences = []
         batch_concepts = []
         sentence_lengths = []
@@ -117,10 +112,8 @@ class DummySeq2SeqDataset(Dataset):
         # Get max lengths for padding.
         max_sen_len = max([len(s) for s in batch_sentences])
         max_concepts_len = max([len(s) for s in batch_concepts])
-        # Pad sentences.
         padded_sentences = [
             torch_pad(s, (0, max_sen_len - len(s))) for s in batch_sentences]
-        # Pad concepts
         padded_concepts = [
             torch_pad(c, (0, max_concepts_len - len(c))) for c in batch_concepts]
 

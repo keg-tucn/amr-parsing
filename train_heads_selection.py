@@ -27,7 +27,8 @@ from utils.data_logger import DataLogger
 
 from config import get_default_config
 from models import RelationIdentification
-from evaluation.tensors_to_amr import get_unlabelled_amr_strings_from_tensors
+from evaluation.tensors_to_amr import get_unlabelled_amr_strings_from_tensors, \
+  get_labelled_amr_strings_from_tensors
 from evaluation.arcs_evaluation_metrics import SmatchScore, initialize_smatch, \
   calc_edges_scores, calc_labels_scores, compute_smatch
 
@@ -130,9 +131,9 @@ def replace_all_edge_labels(amr_str: str, new_edge_label: str):
   new_amr_str = re.sub(r':[a-zA-Z0-9~.-]+', new_edge_label, amr_str)
   return new_amr_str
 
-def remove_order_of_words(amr_str: str):
+def remove_alignments(amr_str: str):
   """
-    Replaces all word orders from the concepts so that the smatch will be
+    Replaces all alignements from the concepts so that the smatch will be
       more focused on predicting the concepts and relations between them.
   """
   new_amr_str = re.sub(r'~e.[0-9,]+', '', amr_str)
@@ -152,16 +153,30 @@ def gather_logged_data(logger: DataLogger, inputs_lengths, logits, mask, gold_ad
                         color_scores.cpu().detach().numpy(),
                         gold_relations.cpu().detach().numpy())
 
-def compute_results(gold_amr_str, inputs, inputs_lengths, predictions, vocabs, logger: DataLogger):
-  gold_outputs = [replace_all_edge_labels(a, UNK_REL_LABEL) for a in gold_amr_str]
-  gold_outputs = [remove_order_of_words(a) for a in gold_outputs]
-  predictions_strings = get_unlabelled_amr_strings_from_tensors(
-    inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
+def compute_results(gold_amr_str, inputs, inputs_lengths, predictions, rel_predictions, vocabs, logger: DataLogger,
+                    config: CfgNode):
+  gold_outputs = [remove_alignments(a) for a in gold_amr_str]
 
-  smatch_score = compute_smatch(gold_outputs, predictions_strings)
+  predicted_str = ''
+  unlabelled_smatch = initialize_smatch()
+  labelled_smatch = initialize_smatch()
+
+  if config.HEADS_SELECTION:
+    gold_outputs_unlabelled = [replace_all_edge_labels(a, UNK_REL_LABEL) for a in gold_outputs]
+    predictions_strings = get_unlabelled_amr_strings_from_tensors(
+      inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
+    unlabelled_smatch = compute_smatch(gold_outputs_unlabelled, predictions_strings)
+    predicted_str = predictions_strings
+
+  if config.ARCS_LABELLING:
+    rel_predictions_strings = get_labelled_amr_strings_from_tensors(
+      inputs, inputs_lengths, rel_predictions, vocabs)
+    labelled_smatch = compute_smatch(gold_outputs, rel_predictions_strings)
+    predicted_str = rel_predictions_strings
+
   amr_comparison_text = '  \n'.join([gold_amr_str[logger.logged_example_index], ' VERSUS',
-                                     predictions_strings[logger.logged_example_index]])
-  return smatch_score, amr_comparison_text
+                                     predicted_str[logger.logged_example_index]])
+  return unlabelled_smatch, labelled_smatch, amr_comparison_text
 
 def decode_concepts(inputs, inputs_lengths, vocabs: Vocabs):
   inputs_no_padding = []
@@ -215,16 +230,15 @@ def eval_step(model: nn.Module,
   loss = compute_loss(vocabs, logits, rel_logits, gold_adj_mat_device, mask, config)
 
   # Remove the edge labels for the gold AMRs before doing the smatch.
-  smatch_score = initialize_smatch()
+  unlabelled_smatch = initialize_smatch()
+  labelled_smatch = initialize_smatch()
   amr_comparison_text = ''
   if log_res:
-    smatch_score, amr_comparison_text = compute_results(
-      gold_amr_str, inputs, inputs_lengths, predictions, vocabs, eval_logger)
+    unlabelled_smatch, labelled_smatch, amr_comparison_text = compute_results(
+      gold_amr_str, inputs, inputs_lengths, predictions, rel_predictions, vocabs, eval_logger, config)
 
-  #TODO: maybe move these metrics to a class/named tuple
-  # (and they could be initialized to 0).
-  return loss, smatch_score, amr_comparison_text, f_score, precision, recall, accuracy, \
-         rel_f_score, rel_precision, rel_recall
+  return loss, unlabelled_smatch, amr_comparison_text, f_score, precision, recall, accuracy, \
+         labelled_smatch, rel_f_score, rel_precision, rel_recall
 
 def evaluate_model(model: nn.Module,
                    optimizer: nn.Module,
@@ -238,7 +252,8 @@ def evaluate_model(model: nn.Module,
   with torch.no_grad():
     epoch_loss = 0
     no_batches = 0
-    epoch_smatch = initialize_smatch()
+    epoch_unlabelled_smatch = initialize_smatch()
+    epoch_labelled_smatch = initialize_smatch()
     f_score = 0
     precision = 0
     recall = 0
@@ -249,8 +264,8 @@ def evaluate_model(model: nn.Module,
     logged_text = "GOLD VS PREDICTED AMRS\n"
 
     for batch in data_loader:
-      loss, smatch_score, amr_comparison_text, aux_f_score, aux_precision, aux_recall, aux_accuracy,\
-        aux_rel_f_score, aux_rel_precision, aux_rel_recall = \
+      loss, unlabelled_smatch, amr_comparison_text, aux_f_score, aux_precision, aux_recall, aux_accuracy,\
+        labelled_smatch, aux_rel_f_score, aux_rel_precision, aux_rel_recall = \
         eval_step(model, optimizer, vocabs, device, batch, eval_logger, config, log_res)
       epoch_loss += loss
       f_score += aux_f_score
@@ -260,9 +275,12 @@ def evaluate_model(model: nn.Module,
       rel_f_score += aux_rel_f_score
       rel_precision += aux_rel_precision
       rel_recall += aux_rel_recall
-      epoch_smatch[SmatchScore.PRECISION] += smatch_score[SmatchScore.PRECISION]
-      epoch_smatch[SmatchScore.RECALL] += smatch_score[SmatchScore.RECALL]
-      epoch_smatch[SmatchScore.F_SCORE] += smatch_score[SmatchScore.F_SCORE]
+      epoch_unlabelled_smatch[SmatchScore.PRECISION] += unlabelled_smatch[SmatchScore.PRECISION]
+      epoch_unlabelled_smatch[SmatchScore.RECALL] += unlabelled_smatch[SmatchScore.RECALL]
+      epoch_unlabelled_smatch[SmatchScore.F_SCORE] += unlabelled_smatch[SmatchScore.F_SCORE]
+      epoch_labelled_smatch[SmatchScore.PRECISION] += labelled_smatch[SmatchScore.PRECISION]
+      epoch_labelled_smatch[SmatchScore.RECALL] += labelled_smatch[SmatchScore.RECALL]
+      epoch_labelled_smatch[SmatchScore.F_SCORE] += labelled_smatch[SmatchScore.F_SCORE]
       logged_text += 'Batch ' + str(no_batches) + ':\n'
       logged_text += amr_comparison_text + '\n----\n'
       no_batches += 1
@@ -274,10 +292,13 @@ def evaluate_model(model: nn.Module,
     rel_f_score = rel_f_score / no_batches
     rel_precision = rel_precision / no_batches
     rel_recall = rel_recall / no_batches
-    epoch_smatch = {score_name: score_value / no_batches for score_name, score_value in epoch_smatch.items()}
+    epoch_unlabelled_smatch = {score_name: score_value / no_batches
+                               for score_name, score_value in epoch_unlabelled_smatch.items()}
+    epoch_labelled_smatch = {score_name: score_value / no_batches
+                               for score_name, score_value in epoch_labelled_smatch.items()}
     logged_text = logged_text.replace('\n', '\n\n')
-    return epoch_loss, epoch_smatch, logged_text, f_score, precision, recall, accuracy, \
-           rel_f_score, rel_precision, rel_recall
+    return epoch_loss, epoch_unlabelled_smatch, logged_text, f_score, precision, recall, accuracy, \
+           epoch_labelled_smatch, rel_f_score, rel_precision, rel_recall
 
 def train_step(model: nn.Module,
                optimizer: Optimizer,
@@ -310,8 +331,8 @@ def train_step(model: nn.Module,
   smatch_score = initialize_smatch()
   amr_comparison_text = ''
   if log_results:
-    smatch_score, amr_comparison_text = compute_results(
-      gold_amr_str, inputs, inputs_lengths, predictions, vocabs, train_logger)
+    smatch_score, _, amr_comparison_text = compute_results(
+      gold_amr_str, inputs, inputs_lengths, predictions, rel_predictions, vocabs, train_logger, config)
 
   return loss, smatch_score, amr_comparison_text, f_score, precision, recall, accuracy
 
@@ -358,15 +379,15 @@ def train_model(model: nn.Module,
     train_precision = train_precision / no_batches
     train_recall = train_recall / no_batches
     train_smatch = {score_name: score_value / no_batches for score_name, score_value in train_smatch.items()}
-    dev_loss, smatch, logged_text, f_score, precision, recall, accuracy, \
-    rel_f_score, rel_precision, rel_recall = evaluate_model(
+    dev_loss, unlabelled_smatch, logged_text, f_score, precision, recall, accuracy, \
+    labelled_smatch, rel_f_score, rel_precision, rel_recall = evaluate_model(
       model, optimizer, vocabs, device, dev_data_loader, eval_logger, config, log_res_dev)
     model.train()
     end_time = time.time()
     time_passed = end_time - start_time
     write_res_to_tensorboard(train_logger, epoch, epoch_loss, train_smatch, train_text,
                              train_f_score, train_precision, train_recall, train_accuracy)
-    write_res_to_tensorboard(eval_logger, epoch, dev_loss, smatch, logged_text,
+    write_res_to_tensorboard(eval_logger, epoch, dev_loss, unlabelled_smatch, logged_text,
                              f_score, precision, recall, accuracy)
     print('Epoch {} (took {:.2f} seconds)'.format(epoch, time_passed))
     print('TRAIN loss: {}, accuracy: {}%, f_score: {}%, precision: {}%, recall: {}%, smatch: {}%'.format(
@@ -374,9 +395,9 @@ def train_model(model: nn.Module,
       round_res(train_recall), round_res(train_smatch[SmatchScore.F_SCORE])))
     print('DEV   loss: {}, accuracy: {}%, f_score: {}%, precision: {}%, recall: {}%, smatch: {}%'.format(
       dev_loss, round_res(accuracy), round_res(f_score), round_res(precision),
-      round_res(recall), round_res(smatch[SmatchScore.F_SCORE])))
-    print('LABEL f_score: {}%, precision: {}%, recall: {}%'.format(
-      round_res(rel_f_score), round_res(rel_precision), round_res(rel_recall)))
+      round_res(recall), round_res(unlabelled_smatch[SmatchScore.F_SCORE])))
+    print('LABEL f_score: {}%, precision: {}%, recall: {}%, smatch : {}%'.format(round_res(rel_f_score),
+      round_res(rel_precision), round_res(rel_recall), round_res(labelled_smatch[SmatchScore.F_SCORE])))
 
 def round_res(result: float):
   result = result * 100
@@ -414,6 +435,13 @@ def main(_):
 
   # Construct config object.
   cfg = get_default_config()
+  if not cfg.RELATION_IDENTIFICATION.HEADS_SELECTION and not cfg.RELATION_IDENTIFICATION.ARCS_LABELLING:
+    print('[ERROR]: You have to select at least one model')
+    return -1
+  if cfg.RELATION_IDENTIFICATION.HEADS_SELECTION:
+    print('Started training Heads Selection')
+  if cfg.RELATION_IDENTIFICATION.ARCS_LABELLING:
+    print('Started training Arcs Labelling')
 
   special_words = ([PAD, EOS, UNK], [PAD, EOS, UNK], [PAD, UNK, None])
   vocabs = Vocabs(train_paths, UNK, special_words, min_frequencies=(1, 1, 1))

@@ -79,22 +79,26 @@ def generate_variables(concepts: List[str]):
 
 def generate_amr_str_rec(root: int, seen_nodes: List[int], depth,
                          concepts: List[str], concepts_var: List[str], adj_mat: List[List[int]],
-                         relation_label: str):
-
+                         vocabs: Vocabs, relation_label: str=None):
+  relation_vocab = vocabs.relation_vocab
+  labels = list(relation_vocab.keys())
   amr_str = "( {} / {} ".format(concepts_var[root], concepts[root])
   no_concepts = len(concepts)
   has_children = False
   for i in range(no_concepts):
-    if adj_mat[root][i] != 0:
+    relation = adj_mat[root][i]
+    if relation != 0:
       has_children = True
       # If there is an edge i is a child node.
       # Check if it's a constant or a node with variable.
       if concepts_var[i] == NO_VAR:
-        child_representation = "{} {}".format(relation_label, concepts[i])
+        label = labels[relation] if relation_label is None else relation_label
+        child_representation = "{} {}".format(label, concepts[i])
       else: # Node with variable.
         if i in seen_nodes:
           # If i was seen it will be represented as a reentrant node (only var).
-          child_representation = "{} {}".format(relation_label, concepts_var[i])
+          label = labels[relation] if relation_label is None else relation_label
+          child_representation = "{} {}".format(label, concepts_var[i])
         else:
           # The child i was not already visited. It's marked as seen and it
           # becomes the root in the recursive call.
@@ -102,8 +106,9 @@ def generate_amr_str_rec(root: int, seen_nodes: List[int], depth,
             seen_nodes.append(i)
             rec_repr = generate_amr_str_rec(i, seen_nodes, depth+1,
                                             concepts, concepts_var, adj_mat,
-                                            relation_label)
-            child_representation = "{} {}".format(relation_label, rec_repr)
+                                            vocabs, relation_label)
+            label = labels[relation] if relation_label is None else relation_label
+            child_representation = "{} {}".format(label, rec_repr)
           else:
             child_representation = ''
             break
@@ -137,7 +142,7 @@ def get_unlabelled_amr_str_from_tensors(concepts: torch.tensor,
       root_idx, seen_nodes=[root_idx], depth=1,
       concepts=concepts_as_list, concepts_var=concepts_var,
       adj_mat=adj_mat_as_list,
-      relation_label=unk_rel_label)
+      vocabs=vocabs, relation_label=unk_rel_label)
   return amr_str
 
 def get_unlabelled_amr_strings_from_tensors(concepts: torch.tensor,
@@ -167,3 +172,53 @@ def get_unlabelled_amr_strings_from_tensors(concepts: torch.tensor,
                                                      unk_rel_label)
     unlabelled_amrs.append(amr_string)
   return unlabelled_amrs
+
+def get_labelled_amr_str_from_tensors(concepts: torch.tensor,
+                                      concepts_length: torch.tensor,
+                                      adj_mat: torch.tensor,
+                                      vocabs: Vocabs):
+  """
+  Args:
+    concepts: Concept sequence (max seq len).
+    concepts_length: Concept sequence length scalar.
+    adj_mat (torch.tensor): Adj matrix showing what relations (label)
+    is between each pair of concepts
+  """
+  # Post-processing (don't allow self edges)
+  max_seq_len = adj_mat.shape[1]
+  mask = torch.eye(max_seq_len, max_seq_len, dtype=bool)
+  adj_mat.masked_fill_(mask, 0)
+
+  root_idx, concepts_as_list, adj_mat_as_list = tensors_to_lists(
+    concepts, concepts_length, adj_mat, vocabs)
+  concepts_var = generate_variables(concepts_as_list)
+  amr_str = generate_amr_str_rec(
+      root_idx, seen_nodes=[root_idx], depth=1,
+      concepts=concepts_as_list, concepts_var=concepts_var,
+      adj_mat=adj_mat_as_list, vocabs=vocabs)
+  return amr_str
+
+def  get_labelled_amr_strings_from_tensors(concepts: torch.tensor,
+                                          concepts_lengths: torch.tensor,
+                                          adj_mats: torch.tensor,
+                                          vocabs: Vocabs):
+  """
+  Args:
+      concepts: Batch of concept sequences (max seq len, batch size).
+      concepts_lengths: Batch of sequences lentgths (batch size).
+      adj_mats (torch.tensor): Batch of adj matrices showing
+      what relation is between concepts, with shape
+        (batch size, max seq len, max seq len).
+      vocabs: vocabulary for de-numeralizing concepts and labels
+
+  Returns: batch of labelled AMR strings
+  """
+  labelled_amrs = []
+  batch_size = concepts.shape[1]
+  for batch in range(batch_size):
+    amr_string = get_labelled_amr_str_from_tensors(concepts[:,batch],
+                                                   concepts_lengths[batch],
+                                                   adj_mats[batch],
+                                                   vocabs)
+    labelled_amrs.append(amr_string)
+  return labelled_amrs

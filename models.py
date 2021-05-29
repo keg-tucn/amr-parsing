@@ -375,7 +375,6 @@ class DenseMLP(nn.Module):
   """
 
   def __init__(self,
-               node_repr_size: int,
                no_labels: int,
                config: CfgNode):
     super(DenseMLP, self).__init__()
@@ -405,7 +404,7 @@ class EdgeScoring(nn.Module):
 
   def __init__(self, no_labels: int, config: CfgNode):
     super(EdgeScoring, self).__init__()
-    self.dense_mlp = DenseMLP(2 * config.HIDDEN_SIZE, no_labels, config)
+    self.dense_mlp = DenseMLP(no_labels, config)
     self.no_labels = no_labels
     self.Ua = nn.Linear(2 * config.HIDDEN_SIZE, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
     self.Wa = nn.Linear(2 * config.HIDDEN_SIZE, config.DENSE_MLP_HIDDEN_SIZE, bias=False)

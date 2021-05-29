@@ -1,5 +1,6 @@
 from typing import List
 from collections import Counter
+from copy import deepcopy
 
 
 def build_vocab(words_counter: Counter,
@@ -32,6 +33,8 @@ class CopySequenceVocab():
         self.unkown_special_word = unkown_special_word
         self.token_vocab = build_vocab(concepts, special_words, min_frequency)
         self.token_vocab_size = len(self.token_vocab.keys())
+        self.concept_vocab = build_vocab(concepts, special_words, min_frequency)
+        self.concept_vocab_size = len(self.concept_vocab.keys())
 
     def get_token_idx(self, token: str):
         """

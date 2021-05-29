@@ -379,6 +379,7 @@ class DenseMLP(nn.Module):
                no_labels: int,
                config: CfgNode):
     super(DenseMLP, self).__init__()
+    self.no_labels = no_labels
     self.va = nn.Linear(config.DENSE_MLP_HIDDEN_SIZE, 1, bias=False)
     self.label_classifier = nn.Linear(config.DENSE_MLP_HIDDEN_SIZE, no_labels, bias=False)
     self.heads_selection = config.HEADS_SELECTION
@@ -392,9 +393,11 @@ class DenseMLP(nn.Module):
         child: Child node representation (batch size, node repr size).
     Returns
       edge_score: (batch size).
+      label_score: (batch size, no labels).
     """
-    edge_score = self.va(classifier_input) if self.heads_selection else torch.tensor([[0.0]])
-    label_score = self.label_classifier(classifier_input) if self.arcs_labelling else torch.tensor([[0.0]])
+    batch_size = classifier_input.shape[0]
+    edge_score = self.va(classifier_input) if self.heads_selection else torch.zeros((batch_size,1))
+    label_score = self.label_classifier(classifier_input) if self.arcs_labelling else torch.zeros((batch_size,self.no_labels))
     # Return score of (batch size), not (batch size, 1).
     return edge_score.squeeze(-1), label_score
 

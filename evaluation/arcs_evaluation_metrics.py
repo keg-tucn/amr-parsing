@@ -171,7 +171,10 @@ def calc_edges_scores(gold_mat: torch.tensor, predictions: torch.tensor, inputs_
     return f_score, precision, recall, accuracy
 
 
-def calc_labels_scores(gold_mat: torch.Tensor, predictions: torch.Tensor, inputs_lengths: torch.Tensor, vocabs: Vocabs):
+def calc_labels_scores(gold_mat: torch.Tensor,
+                       predictions: torch.Tensor,
+                       inputs_lengths: torch.Tensor,
+                       vocabs: Vocabs):
     '''
     Params:
         gold_mat: gold adjacency matrix with indexes for labels

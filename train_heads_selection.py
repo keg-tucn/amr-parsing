@@ -203,8 +203,14 @@ def eval_step(model: nn.Module,
   mask = create_mask(gold_adj_mat_device, inputs_lengths, config)
   concepts_str = decode_concepts(inputs, inputs_lengths, vocabs)
   gather_logged_data(eval_logger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str)
-  f_score, precision, recall, accuracy = calc_edges_scores(gold_adj_mat, predictions, inputs_lengths)
-  rel_f_score, rel_precision, rel_recall = calc_labels_scores(gold_adj_mat, rel_predictions, inputs_lengths, vocabs)
+  if config.HEADS_SELECTION:
+    f_score, precision, recall, accuracy = calc_edges_scores(gold_adj_mat, predictions, inputs_lengths)
+  else:
+    f_score, precision, recall, accuracy = 0, 0, 0, 0
+  if config.ARCS_LABELLING:
+    rel_f_score, rel_precision, rel_recall = calc_labels_scores(gold_adj_mat, rel_predictions, inputs_lengths, vocabs)
+  else:
+    rel_f_score, rel_precision, rel_recall = 0, 0, 0
 
   loss = compute_loss(vocabs, logits, rel_logits, gold_adj_mat_device, mask, config)
 
@@ -215,6 +221,8 @@ def eval_step(model: nn.Module,
     smatch_score, amr_comparison_text = compute_results(
       gold_amr_str, inputs, inputs_lengths, predictions, vocabs, eval_logger)
 
+  #TODO: maybe move these metrics to a class/named tuple
+  # (and they could be initialized to 0).
   return loss, smatch_score, amr_comparison_text, f_score, precision, recall, accuracy, \
          rel_f_score, rel_precision, rel_recall
 

@@ -9,25 +9,23 @@ from data_pipeline.dataset import PAD, EOS, BOS, UNK
 from data_pipeline.dummy.dummy_vocab import DummyVocabs
 
 
-def generate_sentences(len: int, dummy_size):
+def generate_sentences(len: int, number_of_sentences: int):
     """
       Generates random sentences of length len for dummy dataset.
-
+      Args:
+        len (int): length of sentences
+        number_of_sentences (int): number of sentences to generate
       Returns:
         Train Sentences, Test Sentences, Dummy Vocabs
     """
     all_sentences = []
-    all_sentences_dev = []
-    for i in range(dummy_size):
+    for i in range(number_of_sentences):
         letters = string.ascii_lowercase
         sentence = ''.join(random.choice(letters) for i in range(len))
         all_sentences.append(sentence)
     print("all training sentences", all_sentences)
-    special_words = ([PAD, BOS, EOS, UNK], [PAD, BOS, EOS, UNK])
-    vocabs = DummyVocabs(all_sentences, UNK, special_words,
-                         min_frequencies=(1, 1))
 
-    return all_sentences, vocabs
+    return all_sentences
 
 
 def add_eos(sentence, concepts, eos_token: str):
@@ -47,16 +45,29 @@ def numericalize(sentence: List[str],
     """
     Processes sentence and concepts lists of integers to be converted as tensors.
     Args:
-      sentence: Sentence to be numericalized
-      concepts: Corresponding concepts to be numericalized
-      vocabs: Vocabs object with the 3 vocabs (tokens, concepts, relations).
+      sentence (List[str]): Sentence to be numericalized
+      concepts (List[str]): Corresponding concepts to be numericalized
+      vocabs (DummyVocabs): Vocabs object with the 3 vocabs (tokens, concepts, relations).
     Returns a tuple of:
-      sentece: List of token indices.
-      concepts: List of concept indices.
+      sentece (List[int]): List of token indices.
+      concepts (List[int]): List of concept indices.
     """
     processed_sentence = [vocabs.get_token_idx(t) for t in sentence]
     processed_concepts = [vocabs.get_concept_idx(c) for c in concepts]
     return processed_sentence, processed_concepts
+
+
+def build_dummy_vocab():
+    """
+        Function that builds Vocabulary for Dummy Dataset 
+        Returns:
+          DummyVocabs object
+    """
+    special_words = ([PAD, BOS, EOS, UNK], [PAD, BOS, EOS, UNK])
+    letters = string.ascii_lowercase
+    vocabs = DummyVocabs(letters, UNK, special_words,
+                         min_frequencies=(1, 1))
+    return vocabs
 
 
 class DummySeq2SeqDataset(Dataset):
@@ -64,13 +75,15 @@ class DummySeq2SeqDataset(Dataset):
     Dataset of sentence - amr entries, where the amrs are represented as a list
     of concepts and adjacency matrix.
     Arguments:
-      dataset_size: number of random sentences
-      sentence_len: length of randomly generated sentences
-      ordered: if True the entries are ordered (decreasingly) by sentence length.
-      max_sen_len: maximum sentence length
+      vocabs (DummyVocabs): alphabet vocabulary
+      dataset_size (int): number of random sentences
+      sentence_len (int): length of randomly generated sentences
+      max_sen_len (int): maximum sentence length
+      ordered (bool): if True the entries are ordered (decreasingly) by sentence length.
     """
 
     def __init__(self,
+                 vocabs: DummyVocabs,
                  dataset_size: int,
                  sentence_length: int,
                  max_sen_len: int = None,
@@ -80,7 +93,7 @@ class DummySeq2SeqDataset(Dataset):
         self.concepts_list = []
         self.ids = []
         i = 0
-        sentences, vocabs = generate_sentences(sentence_length, dataset_size)
+        sentences = generate_sentences(sentence_length, dataset_size)
         self.vocabs = vocabs
         for sentence in sentences:
             print("dummy sentence: ", sentence)

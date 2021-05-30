@@ -15,8 +15,7 @@ from torch.optim import Optimizer
 from torch.utils.tensorboard import SummaryWriter
 from yacs.config import CfgNode
 
-from data_pipeline.dummy.dummy_dataset import DummySeq2SeqDataset
-from data_pipeline.dummy.dummy_vocab import DummyVocabs
+from data_pipeline.dummy.dummy_dataset import DummySeq2SeqDataset, build_dummy_vocab
 from data_pipeline.copy_sequence.copy_sequence_dataset import CopySequenceDataset, build_copy_vocab
 from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
@@ -519,9 +518,9 @@ def main(_):
     if not FLAGS.max_out_len:
       max_out_len = train_dataset.max_concepts_length
   else:
-    train_dataset = DummySeq2SeqDataset(FLAGS.dummy_train_size, FLAGS.max_out_len)
-    dev_dataset = DummySeq2SeqDataset(FLAGS.dummy_dev_size, FLAGS.max_out_len)
-    vocabs = train_dataset.vocabs
+    vocabs = build_dummy_vocab()
+    train_dataset = DummySeq2SeqDataset(vocabs, FLAGS.dummy_train_size, FLAGS.max_out_len)
+    dev_dataset = DummySeq2SeqDataset(vocabs, FLAGS.dummy_dev_size, FLAGS.max_out_len)
     input_vocab_size = vocabs.token_vocab_size
     output_vocab_size = vocabs.concept_vocab_size
     bos_index = list(train_dataset.vocabs.concept_vocab.keys()).index(BOS)

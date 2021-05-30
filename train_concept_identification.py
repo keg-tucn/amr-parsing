@@ -312,10 +312,10 @@ def train_model(model: nn.Module,
                 vocabs,
                 train_data_loader: DataLoader,
                 dev_data_loader: DataLoader,
-                device: str,
                 train_writer: SummaryWriter,
                 eval_writer: SummaryWriter,
                 config: CfgNode,
+                device: str,
                 scheduler=None):
   if config.LOAD_PATH:
     model = load_model_weights(model, config.LOAD_PATH, config.PERSISTED_COMPONENT)
@@ -336,12 +336,19 @@ def train_model(model: nn.Module,
         no_batches += 1
     epoch_loss = epoch_loss / no_batches
     batch_f_score_train = batch_f_score_train / no_batches
+    train_end_time = time.time()
+    train_time = train_end_time - start_time
+    print('Training took {:.2f} seconds'.format(train_time))
     print("Evaluating...")
+    eval_start_time = time.time()
     fscore, dev_loss = evaluate_model(
         model, criterion, max_out_len, vocabs, dev_data_loader, config, device)
     # gradually decrease the teacher_forcing_racio
     teacher_forcing_ratio -= step_teacher_forcing_ratio
     model.train()
+    eval_end_time = time.time()
+    eval_time_passed = eval_end_time - eval_start_time
+    print('Evaluating took {:.2f} seconds'.format(eval_time_passed))
     end_time = time.time()
     time_passed = end_time - start_time
     print('Epoch {} (took {:.2f} seconds)'.format(epoch + 1, time_passed))
@@ -444,9 +451,9 @@ def pretrain_transformer_model(criterion,
       train_model(pretrain_model, criterion, optimizer, config.PRETRAIN_STEPS,
                   max_out_len, pretrain_vocab,
                   dataloader, eval_dataloader,
-                  device,
                   train_writer, eval_writer,
                   config,
+                  device,
                   scheduler)
 
 
@@ -584,17 +591,17 @@ def main(_):
       model, criterion, optimizer, FLAGS.no_epochs,
       max_out_len, vocabs,
       train_data_loader, train_data_loader,
-      device,
       train_writer, eval_writer,
       concept_identification_config,
+      device,
       scheduler)
   else:
     train_model(
       model, criterion, optimizer, FLAGS.no_epochs,
       max_out_len, vocabs,
       train_data_loader, dev_data_loader,
-      device,
-      train_writer, eval_writer, concept_identification_config)
+      train_writer, eval_writer, concept_identification_config,
+      device)
   train_writer.close()
   eval_writer.close()
 

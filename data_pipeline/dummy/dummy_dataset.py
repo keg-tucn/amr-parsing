@@ -1,10 +1,33 @@
 from typing import List
 import torch
+import string
+import random
 from torch.utils.data import Dataset
 
 from torch.nn.functional import pad as torch_pad
-from data_pipeline.dataset import EOS, BOS
+from data_pipeline.dataset import PAD, EOS, BOS, UNK
 from data_pipeline.dummy.dummy_vocab import DummyVocabs
+
+
+def generate_sentences(len: int, dummy_size):
+    """
+      Generates random sentences of length len for dummy dataset.
+
+      Returns:
+        Train Sentences, Test Sentences, Dummy Vocabs
+    """
+    all_sentences = []
+    all_sentences_dev = []
+    for i in range(dummy_size):
+        letters = string.ascii_lowercase
+        sentence = ''.join(random.choice(letters) for i in range(len))
+        all_sentences.append(sentence)
+    print("all training sentences", all_sentences)
+    special_words = ([PAD, BOS, EOS, UNK], [PAD, BOS, EOS, UNK])
+    vocabs = DummyVocabs(all_sentences, UNK, special_words,
+                         min_frequencies=(1, 1))
+
+    return all_sentences, vocabs
 
 
 def add_eos(sentence, concepts, eos_token: str):
@@ -41,21 +64,24 @@ class DummySeq2SeqDataset(Dataset):
     Dataset of sentence - amr entries, where the amrs are represented as a list
     of concepts and adjacency matrix.
     Arguments:
-      sentences: dummy random sentences.
-      vocabs: the 2 dummy vocabs (tokens, concepts).
+      dataset_size: number of random sentences
+      sentence_len: length of randomly generated sentences
       ordered: if True the entries are ordered (decreasingly) by sentence length.
       max_sen_len: maximum sentence length
     """
 
-    def __init__(self, sentences: List[str],
-                 vocabs: DummyVocabs,
-                 ordered: bool = True,
-                 max_sen_len: int = None):
+    def __init__(self,
+                 dataset_size: int,
+                 sentence_length: int,
+                 max_sen_len: int = None,
+                 ordered: bool = True):
         super(DummySeq2SeqDataset, self).__init__()
         self.sentences_list = []
         self.concepts_list = []
         self.ids = []
         i = 0
+        sentences, vocabs = generate_sentences(sentence_length, dataset_size)
+        self.vocabs = vocabs
         for sentence in sentences:
             print("dummy sentence: ", sentence)
             i = i + 1
@@ -65,8 +91,6 @@ class DummySeq2SeqDataset(Dataset):
             add_eos(tokens, concepts, EOS)
             add_bos(tokens, BOS)
             sentence, concepts = numericalize(tokens, concepts, vocabs)
-            print('sentence numericalized', sentence)
-            print('concepts numericalized', concepts)
             # Convert to pytorch tensors.
             sentence = torch.tensor(sentence, dtype=torch.long)
             concepts = torch.tensor(concepts, dtype=torch.long)

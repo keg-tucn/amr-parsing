@@ -2,8 +2,7 @@ import os
 import os.path
 from typing import Dict
 import time
-import string
-import random
+
 
 from absl import app
 from absl import flags
@@ -380,32 +379,6 @@ def load_model_weights(model, load_path: str, component: str):
   return model
 
 
-def generate_sentences(len: int):
-  """
-    Generates random sentences of length len for dummy dataset.
-
-    Returns:
-      Train Sentences, Test Sentences, Dummy Vocabs
-  """
-  all_sentences = []
-  all_sentences_dev = []
-  for i in range(FLAGS.dummy_train_size):
-    letters = string.ascii_lowercase
-    sentence = ''.join(random.choice(letters) for i in range(len))
-    all_sentences.append(sentence)
-  print("all training sentences", all_sentences)
-  for i in range(FLAGS.dummy_dev_size):
-    letters = string.ascii_lowercase
-    sentence = ''.join(random.choice(letters) for i in range(len))
-    all_sentences_dev.append(sentence)
-  print("all dev sentences", all_sentences_dev)
-
-  special_words = ([PAD, BOS, EOS, UNK], [PAD, BOS, EOS, UNK])
-  vocabs = DummyVocabs(all_sentences, UNK, special_words, min_frequencies=(1, 1))
-
-  return all_sentences, all_sentences_dev, vocabs
-
-
 def init_optimizer(model, 
                    warmup:bool = False):
   """Initialize optimizer to use with Transformer model
@@ -422,14 +395,14 @@ def init_optimizer(model,
 
 
 
-def prepare_pretrain_model(criterion,
-                           scheduler,
-                           max_out_len: int,
-                           device: str,
-                           config: CfgNode,
-                           tensorboard_dir: str):
+def pretrain_transformer_model(criterion,
+                               scheduler,
+                               max_out_len: int,
+                               device: str,
+                               config: CfgNode,
+                               tensorboard_dir: str):
     """
-      Prepare Transformer model for pretraining on Wikitext2 Dataset
+      Pretrain Transformer model on Wikitext2 Dataset
       Args:
         criterion: criterion for loss computation
         scheduler: scheduler for loss computation
@@ -524,26 +497,27 @@ def main(_):
       input_vocab_size = vocabs.token_vocab_size
       output_vocab_size = vocabs.concept_vocab_size
 
-    train_dataset = AMRDataset(
-      train_paths, vocabs, device, seq2seq_setting=True, ordered=True, use_shared=use_shared, glove=glove_embeddings)
-    dev_dataset = AMRDataset(
-      dev_paths, vocabs, device, seq2seq_setting=True, ordered=True, use_shared=use_shared, glove=glove_embeddings)
-    max_out_len = train_dataset.max_concepts_length  
-
-    train_dataset = AMRDataset(
+    if not FLAGS.transformer:
+      train_dataset = AMRDataset(
+        train_paths, vocabs, device, seq2seq_setting=True, ordered=True, use_shared=use_shared, glove=glove_embeddings)
+      dev_dataset = AMRDataset(
+        dev_paths, vocabs, device, seq2seq_setting=True, ordered=True, use_shared=use_shared, glove=glove_embeddings)
+    else:
+      train_dataset = AMRDataset(
         train_paths, vocabs, device, seq2seq_setting=True, ordered=True)
-    dev_dataset = AMRDataset(
+      dev_dataset = AMRDataset(
         dev_paths, vocabs, device, seq2seq_setting=True, ordered=True)
-    bos_index = list(vocabs.concept_vocab.keys()).index(ROOT)
+      bos_index = list(vocabs.concept_vocab.keys()).index(ROOT)
 
     if not FLAGS.max_out_len:
       max_out_len = train_dataset.max_concepts_length
   else:
-    all_sentences, all_sentences_dev, vocabs = generate_sentences(FLAGS.max_out_len)
-    bos_index = list(vocabs.concept_vocab.keys()).index(BOS)
-
-    train_dataset = DummySeq2SeqDataset(all_sentences, vocabs)
-    dev_dataset = DummySeq2SeqDataset(all_sentences_dev, vocabs)
+    train_dataset = DummySeq2SeqDataset(FLAGS.dummy_train_size, FLAGS.max_out_len)
+    dev_dataset = DummySeq2SeqDataset(FLAGS.dummy_dev_size, FLAGS.max_out_len)
+    vocabs = train_dataset.vocabs
+    input_vocab_size = vocabs.token_vocab_size
+    output_vocab_size = vocabs.concept_vocab_size
+    bos_index = list(train_dataset.vocabs.concept_vocab.keys()).index(BOS)
 
   train_data_loader = DataLoader(
       train_dataset, batch_size=FLAGS.batch_size,
@@ -564,17 +538,18 @@ def main(_):
   if FLAGS.transformer:
     tensorboard_dir = 'temp/concept_identification_transf'
     if not FLAGS.dummy:
+      bos_index = list(vocabs.concept_vocab.keys()).index(ROOT)
       # Override configs for Copy Sequence and Save Model Path
       opts = ["CONCEPT_IDENTIFICATION.COPY_SEQUENCE", True,
       "CONCEPT_IDENTIFICATION.SAVE_PATH", "temp/transformer.pth",
       "CONCEPT_IDENTIFICATION.PERSISTED_COMPONENT", "encoder"]
       cfg.merge_from_list(opts)
-      prepare_pretrain_model(criterion,
-                             scheduler,
-                             max_out_len,
-                             device,
-                             concept_identification_config,
-                             tensorboard_dir)
+      pretrain_transformer_model(criterion,
+                                 scheduler,
+                                 max_out_len,
+                                 device,
+                                 concept_identification_config,
+                                 tensorboard_dir)
 
     model = TransformerSeq2Seq(vocabs.token_vocab_size,
                                vocabs.concept_vocab_size,
@@ -582,7 +557,7 @@ def main(_):
                                cfg.CONCEPT_IDENTIFICATION.TRANSF_BASED,
                                device=device).to(device)
     model.init_params()
-    # Add Model Load Path
+    # Override configs to add Model Load Path
     opts = ["CONCEPT_IDENTIFICATION.COPY_SEQUENCE", True,
     "CONCEPT_IDENTIFICATION.LOAD_PATH", "temp/transformer.pth"]
     cfg.merge_from_list(opts)
@@ -606,13 +581,13 @@ def main(_):
 
   if FLAGS.train_is_test:
     train_model(
-        model, criterion, optimizer, FLAGS.no_epochs,
-        max_out_len, vocabs,
-        train_data_loader, train_data_loader,
-        device,
-        train_writer, eval_writer,
-        concept_identification_config,
-        scheduler)
+      model, criterion, optimizer, FLAGS.no_epochs,
+      max_out_len, vocabs,
+      train_data_loader, train_data_loader,
+      device,
+      train_writer, eval_writer,
+      concept_identification_config,
+      scheduler)
   else:
     train_model(
       model, criterion, optimizer, FLAGS.no_epochs,

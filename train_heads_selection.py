@@ -19,7 +19,7 @@ from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
 from data_pipeline.dataset import PAD, EOS, UNK
 from data_pipeline.dataset import AMR_ID_KEY, CONCEPTS_KEY, CONCEPTS_LEN_KEY,\
-  GLOVE_CONCEPTS_KEY, ADJ_MAT_KEY, AMR_STR_KEY
+  GLOVE_CONCEPTS_KEY, ADJ_MAT_KEY, AMR_STR_KEY, CHAR_SENTENCE_KEY, CHAR_SENTENCE_LEN_KEY
 from data_pipeline.dataset import AMRDataset
 from data_pipeline.glove_embeddings import GloVeEmbeddings
 from utils.arcs_masking import create_mask
@@ -72,8 +72,11 @@ def get_gold_data(batch: torch.tensor):
   gold_adj_mat = batch[ADJ_MAT_KEY]
   gold_amr_str = batch[AMR_STR_KEY]
   glove_concepts = batch[GLOVE_CONCEPTS_KEY]
+  character_inputs = batch[CHAR_SENTENCE_KEY]
+  character_inputs_lengths = batch[CHAR_SENTENCE_LEN_KEY]
 
-  return amr_ids, gold_concepts, gold_concepts_length, gold_adj_mat, gold_amr_str, glove_concepts
+  return amr_ids, gold_concepts, gold_concepts_length, gold_adj_mat, gold_amr_str, glove_concepts, \
+         character_inputs, character_inputs_lengths
 
 def compute_loss(vocabs: Vocabs,
                  logits: torch.Tensor,
@@ -174,12 +177,13 @@ def eval_step(model: nn.Module,
               eval_logger: DataLogger,
               config: CfgNode,
               log_res: bool=False):
-  amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, glove_concepts = get_gold_data(batch)
+  amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, glove_concepts, \
+  character_inputs, character_inputs_lengths = get_gold_data(batch)
 
   optimizer.zero_grad()
   inputs_device = inputs.to(device)
   gold_adj_mat_device = gold_adj_mat.to(device)
-  logits, predictions = model(inputs_device, inputs_lengths)
+  logits, predictions = model(inputs_device, inputs_lengths, character_inputs, character_inputs_lengths)
   mask = create_mask(gold_adj_mat_device, inputs_lengths, config)
   concepts_str = decode_concepts(inputs, inputs_lengths, vocabs)
   gather_logged_data(eval_logger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str)
@@ -246,13 +250,14 @@ def train_step(model: nn.Module,
                train_logger: DataLogger,
                config: CfgNode,
                log_results: bool=False):
-  amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, glove_concepts = get_gold_data(batch)
+  amr_ids, inputs, inputs_lengths, gold_adj_mat, gold_amr_str, glove_concepts, \
+  character_inputs, character_inputs_lengths = get_gold_data(batch)
 
   optimizer.zero_grad()
   # Move to trainig device (eg. cuda).
   inputs_device = inputs.to(device)
   gold_adj_mat_device = gold_adj_mat.to(device)
-  logits, predictions = model(inputs_device, inputs_lengths)
+  logits, predictions = model(inputs_device, inputs_lengths, character_inputs, character_inputs_lengths)
   mask = create_mask(gold_adj_mat_device, inputs_lengths, config)
   concepts_str = decode_concepts(inputs, inputs_lengths, vocabs)
   gather_logged_data(train_logger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str)

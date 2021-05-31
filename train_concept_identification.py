@@ -70,8 +70,7 @@ def compute_loss(criterion, logits, gold_outputs):
 
 def compute_fScore(gold_outputs,
                    predicted_outputs,
-                   extended_vocab: Vocabs,
-                   config: CfgNode):
+                   extended_vocab: Vocabs):
   """Computes f_score, precision, recall.
 
   Args:
@@ -84,7 +83,7 @@ def compute_fScore(gold_outputs,
 
   eos_index = list(extended_vocab.keys()).index(EOS)
   concepts_as_list_predicted, concepts_as_list_gold = tensor_to_list(gold_outputs, predicted_outputs, eos_index,
-                                                                       extended_vocab, config)
+                                                                       extended_vocab)
   f_score = 0
   batch_size = len(concepts_as_list_gold)
   for i in range(batch_size):
@@ -115,16 +114,15 @@ def compute_sequence_fscore(gold_sequence, predicted_sequence):
 def tensor_to_list(gold_outputs,
                    predicted_outputs,
                    eos_index,
-                   extended_vocab,
-                   config: CfgNode):
+                   extended_vocab):
   # Extract padding from original outputs
   gold_list_no_padding = extract_padding(gold_outputs, eos_index)
   predicted_list_no_padding = extract_padding(predicted_outputs, eos_index)
 
   # Remove UNK from the sequence
   # TODO store the gold data before numericalization and use it here
-  concepts_as_list_gold = indices_to_words(gold_list_no_padding, extended_vocab, config)
-  concepts_as_list_predicted = indices_to_words(predicted_list_no_padding, extended_vocab, config)
+  concepts_as_list_gold = indices_to_words(gold_list_no_padding, extended_vocab)
+  concepts_as_list_predicted = indices_to_words(predicted_list_no_padding, extended_vocab)
 
   return concepts_as_list_predicted, concepts_as_list_gold
 
@@ -150,13 +148,7 @@ def extract_padding(outputs, eos_index):
 
 
 def indices_to_words(outputs_no_padding,
-                     extended_vocab,
-                     config: CfgNode):
-
-  if config.USE_POINTER_GENERATOR:
-    vocab = extended_vocab
-  else:
-    vocab = extended_vocab.concept_vocab
+                     vocab):
 
   ids_to_concepts_list = list(vocab.keys())
   concepts_as_list = []
@@ -177,6 +169,8 @@ def eval_step(model: nn.Module,
   inputs = batch['sentence']
   inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts']
+  character_inputs = batch["char_sentence"]
+  character_inputs_lengths = batch["char_sentence_length"]
 
   if config.USE_POINTER_GENERATOR:
     unnumericalized_inputs = batch['initial_sentence']
@@ -192,13 +186,17 @@ def eval_step(model: nn.Module,
 
     logits, predictions = model(inputs, inputs_lengths,
                                     extended_vocab_size, torch.as_tensor(indices),
-                                    max_out_length=max_out_len)
-    f_score = compute_fScore(gold_outputs, predictions, extended_vocab, config)
+                                    max_out_length=max_out_len,
+                                    character_inputs=character_inputs,
+                                    character_inputs_lengths=character_inputs_lengths)
+    f_score = compute_fScore(gold_outputs, predictions, extended_vocab)
   else:
     logits, predictions = model(inputs, inputs_lengths,
-                                    max_out_length=max_out_len)
+                                  max_out_length=max_out_len,
+                                  character_inputs=character_inputs,
+                                  character_inputs_lengths=character_inputs_lengths)
 
-    f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab, config)
+    f_score = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab)
 
   gold_output_len = gold_outputs.shape[0]
   padded_gold_outputs = torch_pad(
@@ -239,6 +237,8 @@ def train_step(model: nn.Module,
   inputs = batch['sentence']
   inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts']
+  character_inputs = batch["char_sentence"]
+  character_inputs_lengths = batch["char_sentence_length"]
 
   if config.USE_POINTER_GENERATOR:
     # initial sentence (un-numericalized)
@@ -250,13 +250,18 @@ def train_step(model: nn.Module,
   if config.USE_POINTER_GENERATOR:
     logits, predictions = model(inputs, inputs_lengths,
                                     vocabs.shared_vocab_size, torch.as_tensor(indices),
-                                    teacher_forcing_ratio, gold_outputs)
+                                    teacher_forcing_ratio, gold_outputs,
+                                    character_inputs=character_inputs,
+                                    character_inputs_lengths=character_inputs_lengths)
+    f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab)
   else:
     logits, predictions = model(inputs, inputs_lengths,
                                 teacher_forcing_ratio=teacher_forcing_ratio,
-                                gold_output_sequence=gold_outputs)
+                                gold_output_sequence=gold_outputs,
+                                character_inputs=character_inputs,
+                                character_inputs_lengths=character_inputs_lengths)
+    f_score = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab)
 
-  f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab, config)
   loss = compute_loss(criterion, logits, gold_outputs)
   loss.backward()
   optimizer.step()
@@ -319,12 +324,13 @@ def main(_):
   concept_identification_config = cfg.CONCEPT_IDENTIFICATION.LSTM_BASED
 
   if FLAGS.train_subsets is None:
-    train_subsets = ['bolt']
+    train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
+                     'mt09sdl', 'proxy', 'wb', 'xinhua']
   else:
     # Take subsets from flag passed.
     train_subsets = FLAGS.train_subsets.split(',')
   if FLAGS.dev_subsets is None:
-    dev_subsets = ['bolt']
+    dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
   else:
     # Take subsets from flag passed.
     dev_subsets = FLAGS.dev_subsets.split(',')

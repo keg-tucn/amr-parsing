@@ -6,7 +6,7 @@ import definitions
 import numpy as np
 import pickle
 
-GLOVE_DATA_FILE = 'glove.6B.50d.txt'
+GLOVE_DATA_FILE = 'glove.6B.300d.txt'
 GLOVE_PATH = 'temp/glove'
 GLOVE_CACHE_FILE = 'glove.pickle'
 GLOVE_WORD_2_IDX_CACHE_FILE = 'word2idx.pickle'

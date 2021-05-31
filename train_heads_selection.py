@@ -19,7 +19,7 @@ from data_pipeline.data_reading import get_paths
 from data_pipeline.vocab import Vocabs
 from data_pipeline.dataset import PAD, EOS, UNK
 from data_pipeline.dataset import AMR_ID_KEY, CONCEPTS_KEY, CONCEPTS_LEN_KEY,\
-  GLOVE_CONCEPTS_KEY, ADJ_MAT_KEY, AMR_STR_KEY, CHAR_SENTENCE_KEY, CHAR_SENTENCE_LEN_KEY
+  GLOVE_CONCEPTS_KEY, ADJ_MAT_KEY, AMR_STR_KEY, CHAR_CONCEPTS_KEY, CHAR_CONCEPTS_LEN_KEY
 from data_pipeline.dataset import AMRDataset
 from data_pipeline.glove_embeddings import GloVeEmbeddings
 from utils.arcs_masking import create_mask
@@ -72,8 +72,8 @@ def get_gold_data(batch: torch.tensor):
   gold_adj_mat = batch[ADJ_MAT_KEY]
   gold_amr_str = batch[AMR_STR_KEY]
   glove_concepts = batch[GLOVE_CONCEPTS_KEY]
-  character_inputs = batch[CHAR_SENTENCE_KEY]
-  character_inputs_lengths = batch[CHAR_SENTENCE_LEN_KEY]
+  character_inputs = batch[CHAR_CONCEPTS_KEY]
+  character_inputs_lengths = batch[CHAR_CONCEPTS_LEN_KEY]
 
   return amr_ids, gold_concepts, gold_concepts_length, gold_adj_mat, gold_amr_str, glove_concepts, \
          character_inputs, character_inputs_lengths

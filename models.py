@@ -55,7 +55,7 @@ class Encoder(nn.Module):
     self.use_trainable_embeddings = config.EMB_DIM != 0
     # If config.CHAR_EMB_DIM = 0, then the CharacterEmbedding will not be used char_emb from config.
     self.use_character_level_embeddings = config.CHAR_EMB_DIM != 0
-
+    self.drop_out = config.ENCODER_DROPOUT_RATE
     if self.use_glove:
       self.glove = nn.Embedding(len(glove_embeddings.keys()), config.GLOVE_EMB_DIM)
       weight_matrix = get_weight_matrix(glove_embeddings, config.GLOVE_EMB_DIM)
@@ -69,7 +69,7 @@ class Encoder(nn.Module):
       emb_dim += config.EMB_DIM
     self.lstm = nn.LSTM(
       emb_dim, config.HIDDEN_SIZE, config.NUM_LAYERS,
-      bidirectional=use_bilstm, dropout=config.DROPOUT_RATE)
+      bidirectional=use_bilstm)
     if self.use_character_level_embeddings:
       self.character_level_embeddings = CharacterLevelEmbedding(config)
 
@@ -99,12 +99,20 @@ class Encoder(nn.Module):
       character_embedded_inputs = self.character_level_embeddings(character_inputs, character_inputs_lengths)
       # concatenate embedded_inputs with character lever embeddings on the las dimention
       embedded_inputs = torch.cat((embedded_inputs, character_embedded_inputs), dim=-1)
+    if self.training:
+      # Add dropout to lstm input.
+      dropout = nn.Dropout(p=self.drop_out)
+      embedded_inputs = dropout(embedded_inputs)
     #TODO: see if enforce_sorted would help to be True (eg efficiency).
     packed_embedded = nn.utils.rnn.pack_padded_sequence(
       embedded_inputs, input_lengths, enforce_sorted = False)
     packed_lstm_states, final_states = self.lstm(packed_embedded)
     lstm_states, _ = nn.utils.rnn.pad_packed_sequence(
       packed_lstm_states)
+    if self.training:
+      # Add dropout to lstm output.
+      dropout = nn.Dropout(p=self.drop_out)
+      lstm_states = dropout(lstm_states)
     return lstm_states, final_states
 
 class AdditiveAttention(nn.Module):
@@ -193,7 +201,7 @@ class DecoderStep(nn.Module):
     self.output_embedding = nn.Embedding(output_vocab_size, config.EMB_DIM)
     # Classifier input: previous embedding, decoder state, context vector.
     self.classifier = DecoderClassifier(output_vocab_size, config, use_glove=self.use_glove)
-    self.drop_out = config.DROPOUT_RATE
+    self.drop_out = config.DECODER_DROPOUT_RATE
     if self.use_pointer_generator:
         emb_dim_pointer_generator = config.EMB_DIM + config.HIDDEN_SIZE * 3 + config.GLOVE_EMB_DIM if self.use_glove \
           else config.EMB_DIM + config.HIDDEN_SIZE * 3

@@ -26,9 +26,11 @@ SENTENCE_STR_KEY = 'initial_sentence'
 SENTENCE_LEN_KEY = 'sentence_lengts'
 CHAR_SENTENCE_LEN_KEY = "char_sentence_length"
 CONCEPTS_KEY = 'concepts'
+CHAR_CONCEPTS_KEY = 'char_concepts'
 CONCEPTS_STR_KEY = 'concepts_string'
 GLOVE_CONCEPTS_KEY = 'glove_concepts'
 CONCEPTS_LEN_KEY = 'concepts_lengths'
+CHAR_CONCEPTS_LEN_KEY = "char_concepts_length"
 ADJ_MAT_KEY = 'adj_mat'
 AMR_STR_KEY = 'amr_str'
 
@@ -218,6 +220,8 @@ class AMRDataset(Dataset):
         sentence, concepts, glove_concepts, adj_mat = numericalize(training_entry, vocabs, use_shared, glove)
         # Numericalize the training entry sentence after each character ASCII code.
         char_sentence = numericalize_char(training_entry.sentence)
+        # Numericalize the training entry concepts after each character ASCII code.
+        char_concepts = numericalize_char(training_entry.concepts)
         # Collect the data.
         self.ids.append(id)
         field = {
@@ -225,6 +229,7 @@ class AMRDataset(Dataset):
           CHAR_SENTENCE_KEY: char_sentence,
           SENTENCE_STR_KEY: training_entry.sentence,
           CONCEPTS_KEY: torch.tensor(concepts, dtype=torch.long),
+          CHAR_CONCEPTS_KEY: char_concepts,
           CONCEPTS_STR_KEY: training_entry.concepts,
           GLOVE_CONCEPTS_KEY: torch.tensor(glove_concepts, dtype=torch.long),
           ADJ_MAT_KEY: torch.tensor(adj_mat, dtype=torch.long),
@@ -256,11 +261,12 @@ class AMRDataset(Dataset):
     char_sentence = self.fields_by_id[id][CHAR_SENTENCE_KEY]
     sentence_str = self.fields_by_id[id][SENTENCE_STR_KEY]
     concepts = self.fields_by_id[id][CONCEPTS_KEY]
+    char_concepts = self.fields_by_id[id][CHAR_CONCEPTS_KEY]
     concepts_str = self.fields_by_id[id][CONCEPTS_STR_KEY]
     glove_concepts = self.fields_by_id[id][GLOVE_CONCEPTS_KEY]
     adj_mat = self.fields_by_id[id][ADJ_MAT_KEY]
     amr_str = self.fields_by_id[id][AMR_STR_KEY]
-    return id, sentence, char_sentence, sentence_str, concepts, concepts_str, glove_concepts, adj_mat, amr_str
+    return id, sentence, char_sentence, sentence_str, concepts, char_concepts, concepts_str, glove_concepts, adj_mat, amr_str
 
   def collate_fn(self, batch):
     amr_ids = []
@@ -268,6 +274,7 @@ class AMRDataset(Dataset):
     batch_char_sentence = []
     batch_sentences_strings = []
     batch_concepts = []
+    batch_char_concepts = []
     batch_concepts_strings = []
     batch_glove_concepts = []
     batch_adj_mats = []
@@ -275,12 +282,14 @@ class AMRDataset(Dataset):
     sentence_lengths = []
     concepts_lengths = []
     for entry in batch:
-      amr_id, sentence, char_sentence, sentence_str, concepts, concepts_str, glove_concepts, adj_mat, amr_str = entry
+      amr_id, sentence, char_sentence, sentence_str, concepts, \
+        char_concepts, concepts_str, glove_concepts, adj_mat, amr_str = entry
       amr_ids.append(amr_id)
       batch_sentences.append(sentence)
       batch_char_sentence.append(char_sentence)
       batch_sentences_strings.append(sentence_str)
       batch_concepts.append(concepts)
+      batch_char_concepts.append(char_concepts)
       batch_concepts_strings.append(concepts_str)
       batch_glove_concepts.append(glove_concepts)
       batch_adj_mats.append(adj_mat)
@@ -290,6 +299,7 @@ class AMRDataset(Dataset):
     # Get max lengths for padding.
     max_sen_len = max([len(s) for s in batch_sentences])
     max_char_sen_len = max([len(word) for s in batch_char_sentence for word in s])
+    max_char_concepts_len = max([len(word) for s in batch_char_concepts for word in s])
     max_sen_str_len = max([len(s) for s in batch_sentences_strings])
     max_concepts_len = max([len(s) for s in batch_concepts])
     max_concepts_str_len = max([len(s) for s in batch_concepts_strings])
@@ -297,12 +307,16 @@ class AMRDataset(Dataset):
     max_adj_mat_size = max([len(s) for s in batch_adj_mats])
     # Compute the input_length for the sentence split into characters
     char_sentence_lengths = compute_char_length(batch_char_sentence, max_sen_len)
+    # Compute the input_length for the concepts split into characters
+    char_concepts_lengths = compute_char_length(batch_char_sentence, max_concepts_len)
     # Pad sentences.
     padded_sentences = [
       torch_pad(s, (0, max_sen_len - len(s))) for s in batch_sentences]
 
     # Pad char sentences.
     padded_char_sentences = pad_char_sequence(batch_char_sentence, max_sen_len, max_char_sen_len)
+    # Pad char concepts.
+    padded_char_concepts = pad_char_sequence(batch_char_concepts, max_concepts_len, max_char_concepts_len)
 
     # Pad initial sentences.
     padded_initial_sentences = pad_string_sequnece(batch_sentences_strings, max_sen_str_len)
@@ -338,9 +352,9 @@ class AMRDataset(Dataset):
         AMR_ID_KEY: amr_ids,
         CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts), 0, 1),
         GLOVE_CONCEPTS_KEY: torch.transpose(torch.stack(padded_glove_concepts), 0, 1),
-        CHAR_SENTENCE_KEY: torch.transpose(torch.tensor(padded_char_sentences), 0, 2).to(self.device),
+        CHAR_CONCEPTS_KEY: torch.transpose(torch.tensor(padded_char_concepts), 0, 2).to(self.device),
         # This is left on the cpu for 'pack_padded_sequence'.
-        CHAR_SENTENCE_LEN_KEY: torch.transpose(torch.tensor(char_sentence_lengths), 0, 1),
+        CHAR_CONCEPTS_LEN_KEY: torch.transpose(torch.tensor(char_concepts_lengths), 0, 1),
         CONCEPTS_LEN_KEY: torch.tensor(concepts_lengths),
         ADJ_MAT_KEY: torch.stack(padded_adj_mats),
         AMR_STR_KEY: amr_strings

@@ -97,7 +97,7 @@ class Encoder(nn.Module):
     if self.use_character_level_embeddings:
       # compute character level embeddings
       character_embedded_inputs = self.character_level_embeddings(character_inputs, character_inputs_lengths)
-      # concatenate embedded_inputs with character lever embeddings on the las dimention
+      # concatenate embedded_inputs with character level embeddings on the last dimention
       embedded_inputs = torch.cat((embedded_inputs, character_embedded_inputs), dim=-1)
     if self.training:
       # Add dropout to lstm input.

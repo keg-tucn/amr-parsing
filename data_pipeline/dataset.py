@@ -266,7 +266,8 @@ class AMRDataset(Dataset):
     glove_concepts = self.fields_by_id[id][GLOVE_CONCEPTS_KEY]
     adj_mat = self.fields_by_id[id][ADJ_MAT_KEY]
     amr_str = self.fields_by_id[id][AMR_STR_KEY]
-    return id, sentence, char_sentence, sentence_str, concepts, char_concepts, concepts_str, glove_concepts, adj_mat, amr_str
+    return id, sentence, char_sentence, sentence_str, concepts,\
+           char_concepts, concepts_str, glove_concepts, adj_mat, amr_str
 
   def collate_fn(self, batch):
     amr_ids = []
@@ -308,7 +309,7 @@ class AMRDataset(Dataset):
     # Compute the input_length for the sentence split into characters
     char_sentence_lengths = compute_char_length(batch_char_sentence, max_sen_len)
     # Compute the input_length for the concepts split into characters
-    char_concepts_lengths = compute_char_length(batch_char_sentence, max_concepts_len)
+    char_concepts_lengths = compute_char_length(batch_char_concepts, max_concepts_len)
     # Pad sentences.
     padded_sentences = [
       torch_pad(s, (0, max_sen_len - len(s))) for s in batch_sentences]

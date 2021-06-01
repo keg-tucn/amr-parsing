@@ -18,13 +18,14 @@ class PositionalEncoding(nn.Module):
 
     def __init__(self,
                  d_model: int,
-                 dropout=0.1,
-                 max_len=500):
+                 config: CfgNode):
         super(PositionalEncoding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
+        self.dropout = config.DROPOUT_RATE
+        self.max_len = config.MAX_POS_ENC_LEN
+        self.dropout = nn.Dropout(p=self.dropout)
 
-        positional_encoding = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        positional_encoding = torch.zeros(self.max_len, d_model)
+        position = torch.arange(0, self.max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(
             0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         positional_encoding[:, 0::2] = torch.sin(position * div_term)
@@ -50,13 +51,13 @@ class TransformerSeq2Seq(nn.Module):
                  bos_index: int,
                  # config CONCEPT_IDENTIFICATION.LSTM_BASED
                  config: CfgNode,
-                 dropout=0.5,
                  device="cpu"):
         super(TransformerSeq2Seq, self).__init__()
         hidden_size = config.HIDDEN_SIZE
         embedding_dim = config.EMB_DIM
         head_number = config.NUM_HEADS
         layers_number = config.NUM_LAYERS
+        self.dropout = config.DROPOUT_RATE
         self.BOS_IDX = bos_index
         self.device = device
         # Embed inputs
@@ -65,15 +66,15 @@ class TransformerSeq2Seq(nn.Module):
         self.dec_embedding = nn.Embedding(
             output_vocab_size, embedding_dim).to(self.device)
         # Positional Encoding
-        self.pos_encoder = PositionalEncoding(embedding_dim, dropout)
-        self.pos_decoder = PositionalEncoding(embedding_dim, dropout)
+        self.pos_encoder = PositionalEncoding(embedding_dim, config)
+        self.pos_decoder = PositionalEncoding(embedding_dim, config)
         # Vanilla Transformer
         encoder_layers = TransformerEncoderLayer(
-            embedding_dim, head_number, hidden_size, dropout).to(self.device)
+            embedding_dim, head_number, hidden_size, self.dropout).to(self.device)
         self.transformer_encoder = TransformerEncoder(
             encoder_layers, layers_number).to(self.device)
         decoder_layers = TransformerDecoderLayer(
-            embedding_dim, head_number, hidden_size, dropout).to(self.device)
+            embedding_dim, head_number, hidden_size, self.dropout).to(self.device)
         self.transformer_decoder = TransformerDecoder(
             decoder_layers, layers_number).to(self.device)
 

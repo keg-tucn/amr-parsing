@@ -327,7 +327,6 @@ def train_model(model: nn.Module,
     epoch_loss = 0
     no_batches = 0
     batch_f_score_train = 0
-    print("Training...")
     for batch in train_data_loader:
         batch_loss, f_score_train = train_step(model, criterion, optimizer, batch, vocabs, config, device, teacher_forcing_ratio)
         batch_f_score_train += f_score_train
@@ -338,7 +337,6 @@ def train_model(model: nn.Module,
     train_end_time = time.time()
     train_time = train_end_time - start_time
     print('Training took {:.2f} seconds'.format(train_time))
-    print("Evaluating...")
     eval_start_time = time.time()
     fscore, dev_loss = evaluate_model(
         model, criterion, max_out_len, vocabs, dev_data_loader, config, device)
@@ -365,7 +363,7 @@ def train_model(model: nn.Module,
     torch.save(model.state_dict(), config.SAVE_PATH)
     
 
-def load_model_weights(model, load_path: str, component: str):
+def load_model_weights(model: nn.Module, load_path: str, component: str):
   """
     Loads pretrained model weights to current model
     Args:
@@ -385,7 +383,7 @@ def load_model_weights(model, load_path: str, component: str):
   return model
 
 
-def init_optimizer(model, 
+def init_optimizer(model: nn.Module, 
                    warmup:bool = False):
   """Initialize optimizer to use with Transformer model
      Args: 
@@ -446,7 +444,6 @@ def pretrain_transformer_model(criterion,
                                           device=device).to(device)
       pretrain_model.init_params()
       optimizer = init_optimizer(pretrain_model)
-      print("TRAINING ON", device)
       train_model(pretrain_model, criterion, optimizer, config.PRETRAIN_STEPS,
                   max_out_len, pretrain_vocab,
                   dataloader, eval_dataloader,

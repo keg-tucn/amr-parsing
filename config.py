@@ -4,6 +4,16 @@ _C = CN()
 
 # Configs for Concept Identification.
 _C.CONCEPT_IDENTIFICATION = CN()
+# Save Path
+_C.CONCEPT_IDENTIFICATION.SAVE_PATH = ''
+# Load Path
+_C.CONCEPT_IDENTIFICATION.LOAD_PATH = ''
+# Persisted Component
+_C.CONCEPT_IDENTIFICATION.PERSISTED_COMPONENT = ''
+# input sequence to output sequence or input sequence to input sequence
+_C.CONCEPT_IDENTIFICATION.COPY_SEQUENCE = False
+# Steps for pretraining
+_C.CONCEPT_IDENTIFICATION.PRETRAIN_STEPS = 15
 # Configs for LSTM-based Concept Identification.
 _C.CONCEPT_IDENTIFICATION.LSTM_BASED = CN()
 # Embeddings dimension.
@@ -17,10 +27,22 @@ _C.CONCEPT_IDENTIFICATION.LSTM_BASED.NUM_LAYERS = 1
 # Drop-out.
 _C.CONCEPT_IDENTIFICATION.LSTM_BASED.DROPOUT_RATE = 0.6
 # Pointer generator
-_C.CONCEPT_IDENTIFICATION.LSTM_BASED.USE_POINTER_GENERATOR = True
+_C.CONCEPT_IDENTIFICATION.LSTM_BASED.USE_POINTER_GENERATOR = False
 # Configs for Transformer-based Concept Identification.
 _C.CONCEPT_IDENTIFICATION.TRANSF_BASED = CN()
-#TODO: add transformer based configs.
+# Configs for Transformer-based Concept Identification.
+# Embeddings dimension.
+_C.CONCEPT_IDENTIFICATION.TRANSF_BASED.EMB_DIM = 512
+# Hidden size
+_C.CONCEPT_IDENTIFICATION.TRANSF_BASED.HIDDEN_SIZE = 2048
+# Number of layers.
+_C.CONCEPT_IDENTIFICATION.TRANSF_BASED.NUM_LAYERS = 6
+# Number of heads.
+_C.CONCEPT_IDENTIFICATION.TRANSF_BASED.NUM_HEADS = 8
+# Drop-out.
+_C.CONCEPT_IDENTIFICATION.TRANSF_BASED.DROPOUT_RATE = 0.1
+# Maximum Positional Encodings Lenght
+_C.CONCEPT_IDENTIFICATION.TRANSF_BASED.MAX_POS_ENC_LEN = 500
 
 _C.HEAD_SELECTION = CN()
 # Embeddings dimension.
@@ -48,4 +70,5 @@ _C.HEAD_SELECTION.LOGGING_START_EPOCH_DEV = 20
 
 
 def get_default_config():
-  return _C.clone()
+  return _C.clone() 
+  

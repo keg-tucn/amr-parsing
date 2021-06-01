@@ -26,7 +26,7 @@ class Encoder(nn.Module):
     emb_dim = config.EMB_DIM + config.GLOVE_EMB_DIM if self.use_glove else config.EMB_DIM
     self.lstm = nn.LSTM(
       emb_dim, config.HIDDEN_SIZE, config.NUM_LAYERS,
-      bidirectional=use_bilstm)
+      bidirectional=use_bilstm, dropout=config.DROPOUT_RATE)
 
   def forward(self, inputs: torch.Tensor, input_lengths: torch.Tensor):
     """

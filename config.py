@@ -67,6 +67,8 @@ _C.HEAD_SELECTION.NEGATIVE_CLASS_WEIGHT = 1.0
 _C.HEAD_SELECTION.LOGGING_START_EPOCH_TRAIN = 30
 # Logging start epoch for evaluation flow.
 _C.HEAD_SELECTION.LOGGING_START_EPOCH_DEV = 20
+# Drop-out rate.
+_C.HEAD_SELECTION.DROPOUT_RATE = 0.2
 
 
 def get_default_config():

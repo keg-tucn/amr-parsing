@@ -80,7 +80,7 @@ _C.HEAD_SELECTION.LOGGING_START_EPOCH_TRAIN = 30
 # Logging start epoch for evaluation flow.
 _C.HEAD_SELECTION.LOGGING_START_EPOCH_DEV = 20
 # Drop-out rate.
-_C.HEAD_SELECTION.ENCODER_DROPOUT_RATE = 0.2
+_C.HEAD_SELECTION.DROPOUT_RATE = 0.2
 
 
 def get_default_config():

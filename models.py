@@ -69,7 +69,7 @@ class Encoder(nn.Module):
       emb_dim += config.EMB_DIM
     self.lstm = nn.LSTM(
       emb_dim, config.HIDDEN_SIZE, config.NUM_LAYERS,
-      bidirectional=use_bilstm)
+      bidirectional=use_bilstm, dropout=config.ENCODER_DROPOUT_RATE)
     if self.use_character_level_embeddings:
       self.character_level_embeddings = CharacterLevelEmbedding(config)
 
@@ -79,7 +79,10 @@ class Encoder(nn.Module):
     Args:
         inputs (torch.Tensor): Inputs (input seq len, batch size).
         input_lengths (torch.Tensor): (batch size).
-
+        character_inputs: (torch.Tensor): Inputs split per charactes
+         (word len, input seq len, batch size).
+        character_inputs_lengths: (torch.Tensor): Characters Inputs Length
+        (input seq len, batch size)
     Returns:
         [type]: [description]
     Observation:
@@ -167,15 +170,12 @@ class AdditiveAttention(nn.Module):
 
 class DecoderClassifier(nn.Module):
 
-  def __init__(self, output_vocab_size:int, config: CfgNode, use_glove: False):
+  def __init__(self, output_vocab_size:int, config: CfgNode):
     super(DecoderClassifier, self).__init__()
-    # Classifier input is a concatenation of previous embedding - EMB_DIM + GLOVE_EMB_DIM if use_glove,
+    # Classifier input is a concatenation of previous embedding - EMB_DIM,
     # decoder state - HIDDEN_SIZE and context vector - HIDDEN_SIZE.
-    emb_dim = config.EMB_DIM + 2 * config.HIDDEN_SIZE + config.GLOVE_EMB_DIM if use_glove \
-      else config.EMB_DIM + 2 * config.HIDDEN_SIZE
-
     self.linear_layer = nn.Linear(
-      emb_dim, output_vocab_size)
+      config.EMB_DIM + 2 * config.HIDDEN_SIZE, output_vocab_size)
 
   def forward(self, classifier_input):
     logits = self.linear_layer(classifier_input)
@@ -190,37 +190,21 @@ class DecoderStep(nn.Module):
   decoding strategy.
   """
 
-  def __init__(self, output_vocab_size: int, config: CfgNode, glove_embeddings: Dict=None):
+  def __init__(self, output_vocab_size: int, config: CfgNode):
     super(DecoderStep, self).__init__()
-    # Flags
-    self.use_glove = config.GLOVE_EMB_DIM != 0 and glove_embeddings is not None
-    self.use_trainable_embeddings = config.EMB_DIM != 0
-    self.use_pointer_generator = config.USE_POINTER_GENERATOR
-
-    self.additive_attention = AdditiveAttention(config.HIDDEN_SIZE)
-    self.output_embedding = nn.Embedding(output_vocab_size, config.EMB_DIM)
-    # Classifier input: previous embedding, decoder state, context vector.
-    self.classifier = DecoderClassifier(output_vocab_size, config, use_glove=self.use_glove)
-    self.drop_out = config.DECODER_DROPOUT_RATE
-    if self.use_pointer_generator:
-        emb_dim_pointer_generator = config.EMB_DIM + config.HIDDEN_SIZE * 3 + config.GLOVE_EMB_DIM if self.use_glove \
-          else config.EMB_DIM + config.HIDDEN_SIZE * 3
-        self.p_gen_linear = nn.Linear(emb_dim_pointer_generator, 1, bias=True)
-    self.output_vocab_size = output_vocab_size
-
-    if self.use_glove:
-      self.glove = nn.Embedding(len(glove_embeddings.keys()), config.GLOVE_EMB_DIM)
-      weight_matrix = get_weight_matrix(glove_embeddings, config.GLOVE_EMB_DIM)
-      self.glove.load_state_dict({'weight': weight_matrix})
-      self.glove.weight.requires_grad = False
-
-    emb_dim = config.EMB_DIM + config.HIDDEN_SIZE + config.GLOVE_EMB_DIM if self.use_glove \
-      else config.EMB_DIM + config.HIDDEN_SIZE
     # Lstm input has size EMB_DIM + HIDDEN_SIZE (will take as input the
     # previous embedding - EMB_DIM and the context vector - HIDDEN_SIZE).
     self.lstm_cell = nn.LSTMCell(
-      emb_dim, config.HIDDEN_SIZE)
-
+      config.EMB_DIM + config.HIDDEN_SIZE, config.HIDDEN_SIZE)
+    self.additive_attention = AdditiveAttention(config.HIDDEN_SIZE)
+    self.output_embedding = nn.Embedding(output_vocab_size, config.EMB_DIM)
+    # Classifier input: previous embedding, decoder state, context vector.
+    self.classifier = DecoderClassifier(output_vocab_size, config)
+    self.drop_out = config.DECODER_DROPOUT_RATE
+    self.use_pointer_generator = config.USE_POINTER_GENERATOR
+    if self.use_pointer_generator:
+        self.p_gen_linear = nn.Linear(config.HIDDEN_SIZE * 3 + config.EMB_DIM, 1, bias=True)
+    self.output_vocab_size = output_vocab_size
   def forward(self,
               input: torch.Tensor,
               previous_state: Tuple[torch.Tensor, torch.Tensor],
@@ -252,12 +236,7 @@ class DecoderStep(nn.Module):
            (batch size, number of output classes).
     """
     # Embed input.
-    previous_embedding = self.output_embedding(input) if self.use_trainable_embeddings else None
-    if self.use_glove and self.use_trainable_embeddings:
-      glove_previous_embedding = self.glove(input)
-      previous_embedding = torch.cat((previous_embedding, glove_previous_embedding), dim=-1)
-    if self.use_glove and not self.use_trainable_embeddings:
-      previous_embedding = self.glove(input)
+    previous_embedding = self.output_embedding(input)
     # Compute context vector.
     h = previous_state[0]
     context_vector, attention = self.additive_attention(h, encoder_states, attention_mask)
@@ -298,12 +277,11 @@ class Decoder(nn.Module):
   def __init__(self,
                 output_vocab_size: int,
                 config: CfgNode,
-                device: str = "cpu",
-                glove_embeddings: Dict=None):
+                device: str = "cpu"):
     super(Decoder, self).__init__()
     self.device = device
     self.output_vocab_size = output_vocab_size
-    self.decoder_step = DecoderStep(output_vocab_size, config, glove_embeddings)
+    self.decoder_step = DecoderStep(output_vocab_size, config)
     self.initial_state_layer_h = nn.Linear(
       config.HIDDEN_SIZE, config.HIDDEN_SIZE)
     self.initial_state_layer_c = nn.Linear(
@@ -406,7 +384,7 @@ class Seq2seq(nn.Module):
                device="cpu"):
     super(Seq2seq, self).__init__()
     self.encoder = Encoder(input_vocab_size, config, glove_embeddings=glove_embeddings)
-    self.decoder = Decoder(output_vocab_size, config, device=device, glove_embeddings=glove_embeddings)
+    self.decoder = Decoder(output_vocab_size, config, device=device)
     self.device = device
     if config.USE_POINTER_GENERATOR:
       self.encoder.embedding.weight = self.decoder.decoder_step.output_embedding.weight

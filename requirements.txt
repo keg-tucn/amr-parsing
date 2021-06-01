@@ -1,7 +1,8 @@
 penman
 absl-py
-torch
+torch>=1.8
 tensorboard
 smatch
 yacs
+torchtext>=0.9
 matplotlib

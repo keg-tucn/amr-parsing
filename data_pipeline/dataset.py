@@ -17,7 +17,9 @@ from data_pipeline.glove_embeddings import GloVeEmbeddings
 PAD = '<pad>'
 UNK = '<unk>'
 EOS = '<eos>'
+BOS = '<bos>'
 PAD_IDX = 0
+BOS_IDX = 1
 
 AMR_ID_KEY = 'amr_id'
 SENTENCE_KEY = 'sentence'
@@ -124,8 +126,8 @@ def numericalize_char(sentence):
 
 def numericalize(training_entry: TrainingEntry,
                  vocabs: Vocabs,
-                 use_shared: bool,
-                 glove_embeddings: GloVeEmbeddings):
+                 use_shared: bool = False,
+                 glove_embeddings: GloVeEmbeddings = None):
   """
   Processes the train entry into lists of integers that can be easily converted
   into tensors. For the adjacency matrix 0 will be used in case the relation
@@ -347,7 +349,7 @@ class AMRDataset(Dataset):
         CHAR_SENTENCE_LEN_KEY: torch.transpose(torch.tensor(char_sentence_lengths), 0, 1),
         CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts), 0, 1).to(self.device),
         CONCEPTS_STR_KEY: padded_concepts_string
-      }
+        }
     else:
       new_batch = {
         AMR_ID_KEY: amr_ids,

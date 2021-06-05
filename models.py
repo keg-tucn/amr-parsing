@@ -25,13 +25,17 @@ class CharacterLevelEmbedding(nn.Module):
   def forward(self, inputs: torch.Tensor, input_lengths: torch.Tensor):
     """
     Compute the learned embeddings at character level
-    :param inputs: (torch.Tensor): Inputs (word len, input seq len, batch size).
+       Args:
+           inputs: (torch.Tensor): Inputs (word len, input seq len, batch size).
            input_lengths: (torch.Tensor): Inputs Length (input seq len, batch size)
-    :return:
+       Returns:
+           output: the embedded input sequence
     """
     # word_len x input_seq_len x batch_size x char_emb_dim
     embedded_inputs = self.embedding(inputs)
     word_len, input_seq_len, batch_size, char_emb_size = embedded_inputs.shape
+    # view will return a tensor with the same data but with a different shape
+    # the reshape and view are used in order to feed the embedded_inputs and inputs_length to the pack_padded_sequence
     packable_embedded_inputs = embedded_inputs.view(word_len, input_seq_len * batch_size, char_emb_size)
     packable_input_lengths = input_lengths.reshape(input_seq_len * batch_size)
     packed_embedded = nn.utils.rnn.pack_padded_sequence(
@@ -61,10 +65,14 @@ class Encoder(nn.Module):
       weight_matrix = get_weight_matrix(glove_embeddings, config.GLOVE_EMB_DIM)
       self.glove.load_state_dict({'weight': weight_matrix})
       self.glove.weight.requires_grad = False
-    emb_dim = config.GLOVE_EMB_DIM + config.CHAR_HIDDEN_SIZE if self.use_glove & self.use_character_level_embeddings \
-      else config.GLOVE_EMB_DIM if self.use_glove\
-      else config.CHAR_HIDDEN_SIZE if self.use_character_level_embeddings \
-      else 0
+    emb_dim = 0
+    if self.use_glove & self.use_character_level_embeddings:
+      emb_dim += config.GLOVE_EMB_DIM + config.CHAR_HIDDEN_SIZE
+    elif self.use_glove:
+      emb_dim += config.GLOVE_EMB_DIM
+    elif self.use_character_level_embeddings:
+      emb_dim += config.CHAR_HIDDEN_SIZE
+
     if self.use_trainable_embeddings:
       emb_dim += config.EMB_DIM
     self.lstm = nn.LSTM(

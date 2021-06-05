@@ -13,7 +13,6 @@ from torch.utils.data import DataLoader
 from torch.nn.functional import pad as torch_pad
 from torch.optim import Optimizer
 from torch.utils.tensorboard import SummaryWriter
-from yacs.config import CfgNode
 
 from data_pipeline.dummy.dummy_dataset import DummySeq2SeqDataset, build_dummy_vocab
 from data_pipeline.copy_sequence.copy_sequence_dataset import CopySequenceDataset, build_copy_vocab
@@ -30,7 +29,6 @@ from model.transformer import TransformerSeq2Seq
 from optimizer import NoamOpt
 from yacs.config import CfgNode
 from torchtext.datasets import WikiText2
-from torchtext.data.utils import get_tokenizer
 
 
 FLAGS = flags.FLAGS
@@ -56,7 +54,7 @@ flags.DEFINE_integer('no_epochs',
                      default=80,
                      help=('Number of epochs.'))
 flags.DEFINE_boolean('use_glove',
-                     default=True,
+                     default=False,
                      help=('Flag which tells whether model should use GloVe Embeddings or not.'))
 flags.DEFINE_integer('max_out_len',
                      short_name='len',
@@ -121,13 +119,21 @@ def compute_fScore(gold_outputs,
                                                                        extended_vocab, config)
 
   f_score = 0
+  precision = 0
+  recall = 0
+  accuracy = 0
   batch_size = len(concepts_as_list_gold)
   for i in range(batch_size):
-    f_score_sentence = compute_sequence_fscore(concepts_as_list_gold[i], concepts_as_list_predicted[i])
+    f_score_sentence, precision_sentence, recall_sentence, accuracy_sentence = \
+        compute_sequence_fscore(concepts_as_list_gold[i], concepts_as_list_predicted[i])
     f_score += f_score_sentence
+    precision += precision_sentence
+    recall += recall_sentence
+    accuracy += accuracy_sentence
+
 
   f_score = f_score / batch_size
-  return f_score
+  return f_score, precision, recall, accuracy
 
 
 def compute_sequence_fscore(gold_sequence, predicted_sequence):
@@ -147,10 +153,15 @@ def compute_sequence_fscore(gold_sequence, predicted_sequence):
     recall = 0
   f_score = 0
 
+  if true_positive + false_negative + false_negative!= 0:
+     accuracy = true_positive / (true_positive + false_negative + false_negative)
+  else:
+     accuracy = 0
+
   if precision + recall != 0:
     f_score = 2 * (precision * recall) / (precision + recall)
 
-  return f_score
+  return f_score, precision, recall, accuracy
 
 
 def tensor_to_list(gold_outputs,
@@ -231,18 +242,18 @@ def eval_step(model: nn.Module,
     logits, predictions = model(inputs, inputs_lengths,
                                     extended_vocab_size, torch.as_tensor(indices),
                                     max_out_length=max_out_len)
-    f_score = compute_fScore(gold_outputs, predictions, extended_vocab, config)
+    f_score, precision, recall, accuracy = compute_fScore(gold_outputs, predictions, extended_vocab, config)
   else:
     logits, predictions = model(inputs, inputs_lengths,
                                     max_out_length=max_out_len)
 
-    f_score = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab, config)
+    f_score, precision, recall, accuracy = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab, config)
 
   gold_output_len = gold_outputs.shape[0]
   padded_gold_outputs = torch_pad(
     gold_outputs, (0, 0, 0, max_out_len - gold_output_len))
   loss = compute_loss(criterion, logits, padded_gold_outputs)
-  return f_score, loss
+  return f_score, loss, precision, recall, accuracy
 
 
 def evaluate_model(model: nn.Module,
@@ -255,16 +266,22 @@ def evaluate_model(model: nn.Module,
   model.eval()
   with torch.no_grad():
     epoch_f_score = 0
+    epoch_precision = 0
+    epoch_recall = 0
+    epoch_accuracy = 0
     epoch_loss = 0
     no_batches = 0
     for batch in data_loader:
-      f_score_epoch, loss = eval_step(model, criterion, max_out_len, vocabs, batch, config, device)
+      f_score_epoch, loss, precision, recall, accuracy = eval_step(model, criterion, max_out_len, vocabs, batch, config, device)
       epoch_f_score += f_score_epoch
       epoch_loss += loss
+      epoch_precision += precision
+      epoch_recall += recall
+      epoch_accuracy += accuracy
       no_batches += 1
     epoch_f_score = epoch_f_score / no_batches
     epoch_loss = epoch_loss / no_batches
-    return epoch_f_score, epoch_loss
+    return epoch_f_score, epoch_loss, epoch_precision, epoch_recall, epoch_accuracy
 
 
 def train_step(model: nn.Module,
@@ -290,18 +307,18 @@ def train_step(model: nn.Module,
     logits, predictions = model(inputs, inputs_lengths,
                                     vocabs.shared_vocab_size, torch.as_tensor(indices),
                                     teacher_forcing_ratio, gold_outputs)
-    f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab, config)
+    f_score, precision, recall, accuracy = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab, config)
   else:
     logits, predictions = model(inputs, inputs_lengths,
                                 teacher_forcing_ratio=teacher_forcing_ratio,
                                 gold_output_sequence=gold_outputs)
-    f_score = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab, config)
+    f_score, precision, recall, accuracy = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab, config)
 
   loss = compute_loss(criterion, logits, gold_outputs)
   loss.backward()
   nn.utils.clip_grad_norm_(model.parameters(), 0.5)
   optimizer.step()
-  return loss, f_score
+  return loss, f_score, precision, recall, accuracy
 
 def train_model(model: nn.Module,
                 criterion: nn.Module,
@@ -328,17 +345,21 @@ def train_model(model: nn.Module,
     no_batches = 0
     batch_f_score_train = 0
     for batch in train_data_loader:
-        batch_loss, f_score_train = train_step(model, criterion, optimizer, batch, vocabs, config, device, teacher_forcing_ratio)
+        batch_loss, f_score_train, train_precision, train_recall, train_accuracy = \
+            train_step(model, criterion, optimizer, batch, vocabs, config, device, teacher_forcing_ratio)
         batch_f_score_train += f_score_train
         epoch_loss += batch_loss
         no_batches += 1
     epoch_loss = epoch_loss / no_batches
     batch_f_score_train = batch_f_score_train / no_batches
+    train_precision = train_precision / no_batches
+    train_recall = train_recall / no_batches
+    train_accuracy = train_accuracy / no_batches
     train_end_time = time.time()
     train_time = train_end_time - start_time
     print('Training took {:.2f} seconds'.format(train_time))
     eval_start_time = time.time()
-    fscore, dev_loss = evaluate_model(
+    fscore, dev_loss, dev_precision, dev_recall, dev_accuracy = evaluate_model(
         model, criterion, max_out_len, vocabs, dev_data_loader, config, device)
     # gradually decrease the teacher_forcing_racio
     teacher_forcing_ratio -= step_teacher_forcing_ratio
@@ -349,7 +370,10 @@ def train_model(model: nn.Module,
     end_time = time.time()
     time_passed = end_time - start_time
     print('Epoch {} (took {:.2f} seconds)'.format(epoch + 1, time_passed))
-    print('Train loss: {}, dev loss: {}, f_score_train: {}, f-score: {}'.format(epoch_loss, dev_loss, batch_f_score_train, fscore))
+    print('Train loss: {}, dev loss: {}, f_score_train: {}, f-score: {} '.format(epoch_loss, dev_loss, batch_f_score_train, fscore))
+    print('Train -> Precision: {}, Recall: {}, Accuracy: {}'.format(train_precision, train_recall, train_accuracy))
+    print('Dev -> Precision: {}, Recall: {}, Accuracy: {}'.format(dev_precision, dev_recall, dev_accuracy))
+    print(' ')
     train_writer.add_scalar('loss', epoch_loss, epoch)
     eval_writer.add_scalar('loss', dev_loss, epoch)
     eval_writer.add_scalar('f-score', fscore, epoch)
@@ -472,13 +496,12 @@ def main(_):
 
   if not FLAGS.dummy:
     if FLAGS.train_subsets is None:
-      train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-                       'mt09sdl', 'proxy', 'wb', 'xinhua']
+      train_subsets = ['bolt']
     else:
       # Take subsets from flag passed.
       train_subsets = FLAGS.train_subsets.split(',')
     if FLAGS.dev_subsets is None:
-      dev_subsets = ['bolt', 'consensus', 'dfa', 'proxy', 'xinhua']
+      dev_subsets = ['bolt']
     else:
       # Take subsets from flag passed.
       dev_subsets = FLAGS.dev_subsets.split(',')

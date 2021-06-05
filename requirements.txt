@@ -6,3 +6,4 @@ smatch
 yacs
 torchtext>=0.9
 matplotlib
+nltk

@@ -1,12 +1,74 @@
 from absl.testing import absltest
 import torch
 
-from models import Encoder, AdditiveAttention, DecoderStep, Decoder, Seq2seq
+from models import CharacterLevelEmbedding, Encoder, AdditiveAttention, DecoderStep, Decoder, Seq2seq
 from models import DenseMLP, EdgeScoring, HeadsSelection
 from yacs.config import CfgNode
 from config import get_default_config
 
 class ModelsTest(absltest.TestCase):
+
+  def test_character_level_embeddings(self):
+    word_len = 5
+    input_seq_len = 3
+    batch_size = 10
+    inputs = torch.zeros(word_len, input_seq_len, batch_size, dtype=torch.long)
+    inputs_lengths = torch.full((input_seq_len, batch_size), 4)
+    cfg = get_default_config()
+    character_level_embedding = CharacterLevelEmbedding(cfg.CONCEPT_IDENTIFICATION.LSTM_BASED)
+    outputs = character_level_embedding(inputs, inputs_lengths)
+    expected_output_shape = (input_seq_len, batch_size, cfg.CONCEPT_IDENTIFICATION.LSTM_BASED.CHAR_HIDDEN_SIZE)
+
+    self.assertEqual(outputs.shape, expected_output_shape)
+
+  def test_character_level_embeddings_encoder(self):
+    num_layers = 1
+    token_vocab_size = 10
+    cfg = get_default_config()
+    hidden_size = cfg.CONCEPT_IDENTIFICATION.LSTM_BASED.HIDDEN_SIZE
+    inputs = [
+      [3, 5],
+      [7, 2],
+      [9, 0],
+      [9, 0]
+    ]
+
+    character_inputs = [
+      [[3, 5],
+      [7, 2],
+      [9, 0],
+      [9, 0]],
+
+     [[4, 6],
+      [5, 1],
+      [2, 0],
+      [0, 0]],
+
+     [[0, 9],
+      [7, 0],
+      [9, 0],
+      [0, 0]]
+    ]
+
+    inputs = torch.tensor(inputs)
+    character_inputs = torch.tensor(character_inputs)
+    inputs_lengths = torch.tensor([4, 2])
+    character_inputs_lengths = torch.tensor(
+      [
+        [2, 3],
+        [3, 2],
+        [3, 1],
+        [1, 1]
+      ])
+
+    encoder = Encoder(token_vocab_size, cfg.CONCEPT_IDENTIFICATION.LSTM_BASED)
+    outputs = encoder(inputs, inputs_lengths, character_inputs, character_inputs_lengths)
+    encoder_states = outputs[0]
+    last_encoder_state = outputs[1]
+    h, c = last_encoder_state
+    self.assertEqual(encoder_states.shape, (4, 2, hidden_size))
+    self.assertEqual(h.shape, (num_layers, 2, hidden_size))
+    self.assertEqual(c.shape, (num_layers, 2, hidden_size))
 
 
   def test_encoder(self):

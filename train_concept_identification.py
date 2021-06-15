@@ -56,7 +56,7 @@ flags.DEFINE_integer('no_epochs',
                      default=80,
                      help=('Number of epochs.'))
 flags.DEFINE_boolean('use_glove',
-                     default=True,
+                     default=False,
                      help=('Flag which tells whether model should use GloVe Embeddings or not.'))
 flags.DEFINE_integer('max_out_len',
                      short_name='len',
@@ -79,7 +79,7 @@ flags.DEFINE_boolean('transformer',
 flags.DEFINE_boolean('train_is_test',
                      default=False,
                      help=('Train and test on same dataset.'))
-                     
+
 
 def compute_loss(criterion, logits, gold_outputs):
   """Computes cross entropy loss.
@@ -104,8 +104,7 @@ def compute_loss(criterion, logits, gold_outputs):
 
 def compute_fScore(gold_outputs,
                    predicted_outputs,
-                   extended_vocab: Vocabs,
-                   config: CfgNode):
+                   extended_vocab: Vocabs):
   """Computes f_score, precision, recall.
 
   Args:
@@ -118,8 +117,7 @@ def compute_fScore(gold_outputs,
 
   eos_index = list(extended_vocab.keys()).index(EOS)
   concepts_as_list_predicted, concepts_as_list_gold = tensor_to_list(gold_outputs, predicted_outputs, eos_index,
-                                                                       extended_vocab, config)
-
+                                                                       extended_vocab)
   f_score = 0
   batch_size = len(concepts_as_list_gold)
   for i in range(batch_size):
@@ -156,16 +154,15 @@ def compute_sequence_fscore(gold_sequence, predicted_sequence):
 def tensor_to_list(gold_outputs,
                    predicted_outputs,
                    eos_index,
-                   extended_vocab,
-                   config: CfgNode):
+                   extended_vocab):
   # Extract padding from original outputs
   gold_list_no_padding = extract_padding(gold_outputs, eos_index)
   predicted_list_no_padding = extract_padding(predicted_outputs, eos_index)
- 
+
   # Remove UNK from the sequence
   # TODO store the gold data before numericalization and use it here
-  concepts_as_list_gold = indices_to_words(gold_list_no_padding, extended_vocab, config)
-  concepts_as_list_predicted = indices_to_words(predicted_list_no_padding, extended_vocab, config)
+  concepts_as_list_gold = indices_to_words(gold_list_no_padding, extended_vocab)
+  concepts_as_list_predicted = indices_to_words(predicted_list_no_padding, extended_vocab)
 
   return concepts_as_list_predicted, concepts_as_list_gold
 
@@ -191,9 +188,7 @@ def extract_padding(outputs, eos_index):
 
 
 def indices_to_words(outputs_no_padding,
-                     vocab,
-                     config: CfgNode):
-
+                     vocab):
 
   ids_to_concepts_list = list(vocab.keys())
   concepts_as_list = []
@@ -208,13 +203,14 @@ def indices_to_words(outputs_no_padding,
 def eval_step(model: nn.Module,
               criterion: nn.Module,
               max_out_len: int,
-              vocabs,
+              vocabs: Vocabs,
               batch: Dict[str, torch.tensor],
-              config: CfgNode,
-              device: str):
+              config: CfgNode, device):
   inputs = batch['sentence'].to(device)
   inputs_lengths = batch['sentence_lengts'].to(device)
   gold_outputs = batch['concepts'].to(device)
+  character_inputs = batch["char_sentence"]
+  character_inputs_lengths = batch["char_sentence_length"]
 
   if config.LSTM_BASED.USE_POINTER_GENERATOR:
     unnumericalized_inputs = batch['initial_sentence']
@@ -230,13 +226,17 @@ def eval_step(model: nn.Module,
 
     logits, predictions = model(inputs, inputs_lengths,
                                     extended_vocab_size, torch.as_tensor(indices),
-                                    max_out_length=max_out_len)
-    f_score = compute_fScore(gold_outputs, predictions, extended_vocab, config)
+                                    max_out_length=max_out_len,
+                                    character_inputs=character_inputs,
+                                    character_inputs_lengths=character_inputs_lengths)
+    f_score = compute_fScore(gold_outputs, predictions, extended_vocab)
   else:
     logits, predictions = model(inputs, inputs_lengths,
-                                    max_out_length=max_out_len)
+                                  max_out_length=max_out_len,
+                                  character_inputs=character_inputs,
+                                  character_inputs_lengths=character_inputs_lengths)
 
-    f_score = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab, config)
+    f_score = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab)
 
   gold_output_len = gold_outputs.shape[0]
   padded_gold_outputs = torch_pad(
@@ -248,7 +248,7 @@ def eval_step(model: nn.Module,
 def evaluate_model(model: nn.Module,
                    criterion: nn.Module,
                    max_out_len: int,
-                   vocabs,
+                   vocabs: Vocabs,
                    data_loader: DataLoader,
                    config: CfgNode,
                    device):
@@ -278,6 +278,8 @@ def train_step(model: nn.Module,
   inputs = batch['sentence'].to(device)
   inputs_lengths = batch['sentence_lengts'].to(device)
   gold_outputs = batch['concepts'].to(device)
+  character_inputs = batch["char_sentence"]
+  character_inputs_lengths = batch["char_sentence_length"]
 
   if config.LSTM_BASED.USE_POINTER_GENERATOR:
     # initial sentence (un-numericalized)
@@ -289,13 +291,17 @@ def train_step(model: nn.Module,
   if config.LSTM_BASED.USE_POINTER_GENERATOR:
     logits, predictions = model(inputs, inputs_lengths,
                                     vocabs.shared_vocab_size, torch.as_tensor(indices),
-                                    teacher_forcing_ratio, gold_outputs)
-    f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab, config)
+                                    teacher_forcing_ratio, gold_outputs,
+                                    character_inputs=character_inputs,
+                                    character_inputs_lengths=character_inputs_lengths)
+    f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab)
   else:
     logits, predictions = model(inputs, inputs_lengths,
                                 teacher_forcing_ratio=teacher_forcing_ratio,
-                                gold_output_sequence=gold_outputs)
-    f_score = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab, config)
+                                gold_output_sequence=gold_outputs,
+                                character_inputs=character_inputs,
+                                character_inputs_lengths=character_inputs_lengths)
+    f_score = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab)
 
   loss = compute_loss(criterion, logits, gold_outputs)
   loss.backward()
@@ -308,7 +314,7 @@ def train_model(model: nn.Module,
                 optimizer: Optimizer,
                 no_epochs: int,
                 max_out_len: int,
-                vocabs,
+                vocabs: Vocabs,
                 train_data_loader: DataLoader,
                 dev_data_loader: DataLoader,
                 train_writer: SummaryWriter,
@@ -361,7 +367,7 @@ def train_model(model: nn.Module,
   # Save pretrained model
   if config.SAVE_PATH:
     torch.save(model.state_dict(), config.SAVE_PATH)
-    
+
 
 def load_model_weights(model: nn.Module, load_path: str, component: str):
   """
@@ -383,10 +389,10 @@ def load_model_weights(model: nn.Module, load_path: str, component: str):
   return model
 
 
-def init_optimizer(model: nn.Module, 
+def init_optimizer(model: nn.Module,
                    warmup:bool = False):
   """Initialize optimizer to use with Transformer model
-     Args: 
+     Args:
       model
       warmup (bool): choose optimizer
     Returns:
@@ -466,14 +472,14 @@ def main(_):
     cfg.merge_from_file(config_path)
     cfg.freeze()
 
-  concept_identification_config = cfg.CONCEPT_IDENTIFICATION  
+  concept_identification_config = cfg.CONCEPT_IDENTIFICATION
 
   max_out_len = FLAGS.max_out_len
 
   if not FLAGS.dummy:
     if FLAGS.train_subsets is None:
       train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-                       'mt09sdl', 'proxy', 'wb', 'xinhua']
+                      'mt09sdl', 'proxy', 'wb', 'xinhua']
     else:
       # Take subsets from flag passed.
       train_subsets = FLAGS.train_subsets.split(',')

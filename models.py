@@ -449,32 +449,30 @@ class DenseMLP(nn.Module):
   MLP from Dependency parsing as Head Selection.
   """
 
-  def __init__(self,
-               node_repr_size:int,
-               config: CfgNode):
+  def __init__(self, config: CfgNode):
     super(DenseMLP, self).__init__()
-    self.Ua = nn.Linear(node_repr_size, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
-    self.Wa = nn.Linear(node_repr_size, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
     self.va = nn.Linear(config.DENSE_MLP_HIDDEN_SIZE, 1, bias=False)
 
 
-  def forward(self, parent: torch.Tensor, child: torch.Tensor):
+  def forward(self, classifier_input):
     """
     Args:
-        parent: Parent node representation (batch size, node repr size).
-        child: Child node representation (batch size, node repr size).
+        classifier_input: arc representation of Dense MLP hidden size for each
+          concept pair; shape (batch_size, seq_len, seq_len, dense_mlp_hidden_size)
     Returns
-      edge_score: (batch size).
+      edge_score: (batch size, seq_len, seq_len).
     """
-    edge_score = self.va(torch.tanh(self.Ua(parent) + self.Wa(child)))
-    # Return score of (batch size), not (batch size, 1).
-    return edge_score[:,0]
+    edge_score = self.va(classifier_input)
+    # Drop last dimension (we don't want vectors of 1 element).
+    return edge_score.squeeze(-1)
 
 class EdgeScoring(nn.Module):
 
   def __init__(self, config: CfgNode):
     super(EdgeScoring, self).__init__()
-    self.dense_mlp = DenseMLP(2 * config.HIDDEN_SIZE, config)
+    self.dense_mlp = DenseMLP(config)
+    self.Ua = nn.Linear(2 * config.HIDDEN_SIZE, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
+    self.Wa = nn.Linear(2 * config.HIDDEN_SIZE, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
 
   def forward(self, concepts: torch.tensor):
     """
@@ -487,15 +485,16 @@ class EdgeScoring(nn.Module):
       (batch size, no of concepts, no of concepts).
     """
     batch_size, no_of_concepts, _ = concepts.shape
-    scores = torch.zeros((batch_size, no_of_concepts, no_of_concepts))
-    no_concepts = concepts.shape[1]
-    #TODO: think if this can be done without loops.
-    for i in range(no_concepts):
-      for j in range(no_concepts):
-        parent = concepts[:,i]
-        child = concepts[:,j]
-        score = self.dense_mlp(parent, child)
-        scores[:,i,j] = score
+    parent_representations = self.Ua(concepts)
+    child_representations = self.Wa(concepts)
+
+    parent_mat = torch.repeat_interleave(parent_representations.unsqueeze(2), no_of_concepts, dim=-2)
+    child_mat = torch.repeat_interleave(child_representations.unsqueeze(2), no_of_concepts, dim=-2)
+    child_mat = torch.transpose(child_mat, -2, -3)
+
+    # shape (batch_size, seq_len, seq_len, dense_mlp_hidden_size)
+    classifier_input = torch.tanh(parent_mat + child_mat)
+    scores = self.dense_mlp(classifier_input)
     return scores
 
 class HeadsSelection(nn.Module):

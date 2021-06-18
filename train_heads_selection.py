@@ -399,7 +399,7 @@ def main(_):
 
   model = HeadsSelection(vocabs.concept_vocab_size, cfg.HEAD_SELECTION,
                          glove_embeddings.embeddings_vocab if FLAGS.use_glove else None).to(device)
-  optimizer = optim.Adam(model.parameters(), lr=1e-2)
+  optimizer = optim.Adam(model.parameters())
 
   #Use --logdir temp/heads_selection for tensorboard dev upload
   tensorboard_dir = 'temp/heads_selection'

@@ -2,7 +2,7 @@ from absl.testing import absltest
 import torch
 
 from evaluation.tensors_to_amr import tensors_to_lists, generate_variables, \
-  get_unlabelled_amr_str_from_tensors, generate_amr_str_rec, get_unlabelled_amr_strings_from_tensors
+  get_amr_str_from_tensors, generate_amr_str_rec, get_amr_strings_from_tensors
 
 
 """
@@ -132,7 +132,8 @@ class TensorsToAmrTest(absltest.TestCase):
     amr_str = generate_amr_str_rec(
       root, seen_nodes=[], depth=1,
       concepts=concepts, concepts_var=concepts_var, adj_mat=adj_mat,
-      relation_label=UNK_REL_LABEL)
+      labels=[],
+      unk_relation_label=UNK_REL_LABEL)
     # Compare them with no extra spaces.
     amr_str = ' '.join(amr_str.split())
     expected_amr_str = ' '.join(expected_amr_str.split())
@@ -184,7 +185,8 @@ class TensorsToAmrTest(absltest.TestCase):
       root_idx, seen_nodes=[root_idx], depth=1,
       concepts=concepts_as_list, concepts_var=concepts_var,
       adj_mat=adj_mat_as_list,
-      relation_label=UNK_REL_LABEL)
+      labels=[],
+      unk_relation_label=UNK_REL_LABEL)
 
     # Compare them with no extra spaces.
     amr_str = ' '.join(amr_str.split())
@@ -195,6 +197,7 @@ class TensorsToAmrTest(absltest.TestCase):
     class MyVocabs:
       def __init__(self):
         self.concept_vocab = {'<pad>': 0, 'establish-01': 1, 'model': 2, 'industry': 3, 'innovate-01': 4}
+        self.relation_vocab = {'ARG0': 0, 'ARG1': 1}
 
     concepts = torch.tensor([10, 1, 2, 3, 4, 0])
     concept_length = 5
@@ -214,7 +217,7 @@ class TensorsToAmrTest(absltest.TestCase):
                     :unk-label ( i2 / innovate-01 
                             :unk-label ( i / industry ))))"""
 
-    amr_str = get_unlabelled_amr_str_from_tensors(concepts, concept_length, adj_mat, vocabs, unk_rel_label=':unk-label')
+    amr_str = get_amr_str_from_tensors(concepts, concept_length, adj_mat, vocabs, unk_rel_label=':unk-label')
 
     # Compare them with no extra spaces.
     amr_str = ' '.join(amr_str.split())
@@ -225,6 +228,7 @@ class TensorsToAmrTest(absltest.TestCase):
     class MyVocabs:
       def __init__(self):
         self.concept_vocab = {'<pad>': 0, 'establish-01': 1, 'model': 2, 'industry': 3, 'innovate-01': 4}
+        self.relation_vocab = {'ARG0': 0, 'ARG1': 1}
 
     concepts = torch.tensor([[10, 1, 2, 3, 4, 0]])
     # Concepts should have shape (seq len, batch size).
@@ -245,7 +249,7 @@ class TensorsToAmrTest(absltest.TestCase):
                     :unk-label ( i2 / innovate-01 
                             :unk-label ( i / industry ))))"""
 
-    amr_strings = get_unlabelled_amr_strings_from_tensors(
+    amr_strings = get_amr_strings_from_tensors(
       concepts, concept_length, adj_mat, vocabs, unk_rel_label=UNK_REL_LABEL)
 
     # Compare them with no extra spaces.

@@ -50,7 +50,7 @@ class TensorsToAmrTest(absltest.TestCase):
         self.concept_vocab = {'<pad>': 0, 'dog': 1, 'eat-01': 2, 'bone': 3}
 
     concepts = torch.tensor([10, 1, 2, 3, 0, 0])
-    concept_length = 4
+    concept_length = torch.tensor([4])
     adj_mat = [
       [0, 0, 1, 1, 0],
       [0, 0, 0, 0, 0],

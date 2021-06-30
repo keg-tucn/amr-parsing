@@ -166,13 +166,13 @@ def compute_results(gold_amr_str, inputs, inputs_lengths, predictions, rel_predi
   if config.HEADS_SELECTION:
     gold_outputs_unlabelled = [replace_all_edge_labels(a, UNK_REL_LABEL) for a in gold_outputs]
     predictions_strings = get_amr_strings_from_tensors(
-      inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
+      inputs, inputs_lengths, predictions, vocabs.concept_vocab, vocabs.relation_vocab, UNK_REL_LABEL)
     unlabelled_smatch = compute_smatch(gold_outputs_unlabelled, predictions_strings)
     predicted_str = predictions_strings
 
   if config.ARCS_LABELLING:
     rel_predictions_strings = get_amr_strings_from_tensors(
-      inputs, inputs_lengths, rel_predictions, vocabs, UNK_REL_LABEL)
+      inputs, inputs_lengths, rel_predictions, vocabs.concept_vocab, vocabs.relation_vocab, None)
     labelled_smatch = compute_smatch(gold_outputs, rel_predictions_strings)
     predicted_str = rel_predictions_strings
 
@@ -500,6 +500,7 @@ def main(_):
     cfg.RELATION_IDENTIFICATION)
   eval_writer.close()
   train_writer.close()
+  torch.save(model.state_dict(), 'temp/relation_identification_big.pth')
 
 if __name__ == "__main__":
   app.run(main)

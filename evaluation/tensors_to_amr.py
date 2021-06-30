@@ -3,14 +3,12 @@ from typing import List
 import torch
 import random
 
-from data_pipeline.vocab import Vocabs
-
 NO_VAR = '_'
 
 def tensors_to_lists(concepts: torch.tensor,
                      concepts_length: torch.tensor,
                      adj_mat: torch.tensor,
-                     vocabs: Vocabs):
+                     concept_vocab):
   """
   Args:
     concepts: Concept sequence (max seq len).
@@ -32,8 +30,8 @@ def tensors_to_lists(concepts: torch.tensor,
   if(len(root_indexes.tolist()) == 1):
     root_idx = int(root_indexes[0])
   if(len(root_indexes.tolist()) > 1):
-    chosen_index = random.randrange(len(root_indexes.tolist()))
-    root_idx = int(root_indexes[chosen_index])
+    # chosen_index = random.randrange(len(root_indexes.tolist()))
+    root_idx = int(root_indexes[0])
   # Remove fake root
   concepts_no_fake_root = concepts_no_padding[1:]
   adj_mat_no_fake_root = adj_mat_no_padding[1:,1:]
@@ -42,7 +40,7 @@ def tensors_to_lists(concepts: torch.tensor,
   concepts_as_list = concepts_no_fake_root.tolist()
   adj_mat_as_list = adj_mat_no_fake_root.tolist()
   # Un-numericalize concepts.
-  ids_to_concepts_list = list(vocabs.concept_vocab.keys())
+  ids_to_concepts_list = list(concept_vocab.keys())
   concepts_as_list = [ids_to_concepts_list[id] for id in concepts_as_list]
   return root_idx, concepts_as_list, adj_mat_as_list
 
@@ -115,7 +113,8 @@ def generate_amr_str_rec(root: int, seen_nodes: List[int], depth,
 def get_amr_str_from_tensors(concepts: torch.tensor,
                              concepts_length: torch.tensor,
                              adj_mat: torch.tensor,
-                             vocabs: Vocabs,
+                             concept_vocab,
+                             relation_vocab,
                              unk_rel_label: str):
   """
   Args:
@@ -131,9 +130,9 @@ def get_amr_str_from_tensors(concepts: torch.tensor,
   adj_mat.masked_fill_(mask, 0)
 
   root_idx, concepts_as_list, adj_mat_as_list = tensors_to_lists(
-    concepts, concepts_length, adj_mat, vocabs)
+    concepts, concepts_length, adj_mat, concept_vocab)
   concepts_var = generate_variables(concepts_as_list)
-  relation_vocab = vocabs.relation_vocab
+  relation_vocab = relation_vocab
   labels = list(relation_vocab.keys())
   amr_str = generate_amr_str_rec(
       root_idx, seen_nodes=[root_idx], depth=1,
@@ -146,7 +145,8 @@ def get_amr_str_from_tensors(concepts: torch.tensor,
 def get_amr_strings_from_tensors(concepts: torch.tensor,
                                  concepts_lengths: torch.tensor,
                                  adj_mats: torch.tensor,
-                                 vocabs: Vocabs,
+                                 concept_vocab,
+                                 relation_vocab,
                                  unk_rel_label: str):
   """
   This method creates a labelled or unlabelled AMR, depending on the value
@@ -170,7 +170,8 @@ def get_amr_strings_from_tensors(concepts: torch.tensor,
     amr_string = get_amr_str_from_tensors(concepts[:,batch],
                                           concepts_lengths[batch],
                                           adj_mats[batch],
-                                          vocabs,
+                                          concept_vocab,
+                                          relation_vocab,
                                           unk_rel_label)
     amrs.append(amr_string)
   return amrs

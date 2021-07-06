@@ -27,7 +27,7 @@ from utils.data_logger import DataLogger
 
 from config import get_default_config
 from models import HeadsSelection
-from evaluation.tensors_to_amr import get_unlabelled_amr_strings_from_tensors
+from evaluation.tensors_to_amr import get_amr_strings_from_tensors
 from evaluation.arcs_evaluation_metrics import SmatchScore, initialize_smatch, \
   calc_edges_scores, compute_smatch
 
@@ -142,7 +142,7 @@ def gather_logged_data(logger: DataLogger, inputs_lengths, logits, mask, gold_ad
 def compute_results(gold_amr_str, inputs, inputs_lengths, predictions, vocabs, logger: DataLogger):
   gold_outputs = [replace_all_edge_labels(a, UNK_REL_LABEL) for a in gold_amr_str]
   gold_outputs = [remove_order_of_words(a) for a in gold_outputs]
-  predictions_strings = get_unlabelled_amr_strings_from_tensors(
+  predictions_strings = get_amr_strings_from_tensors(
     inputs, inputs_lengths, predictions, vocabs, UNK_REL_LABEL)
 
   smatch_score = compute_smatch(gold_outputs, predictions_strings)

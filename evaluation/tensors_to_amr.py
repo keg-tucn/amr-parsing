@@ -127,7 +127,7 @@ def get_amr_str_from_tensors(concepts: torch.tensor,
   """
   # Post-processing (don't allow self edges)
   max_seq_len = adj_mat.shape[1]
-  mask = torch.eye(max_seq_len, max_seq_len, dtype=bool)
+  mask = torch.eye(max_seq_len, max_seq_len, dtype=bool).to(adj_mat.device)
   adj_mat.masked_fill_(mask, 0)
 
   root_idx, concepts_as_list, adj_mat_as_list = tensors_to_lists(

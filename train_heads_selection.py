@@ -332,13 +332,14 @@ def train_step(model: nn.Module,
   loss.backward()
   optimizer.step()
 
-  smatch_score = initialize_smatch()
+  unlabelled_smatch = initialize_smatch()
+  labelled_smatch = initialize_smatch()
   amr_comparison_text = ''
   if log_results:
-    smatch_score, _, amr_comparison_text = compute_results(
+    unlabelled_smatch, labelled_smatch, amr_comparison_text = compute_results(
       gold_amr_str, inputs, inputs_lengths, predictions, rel_predictions, vocabs, train_logger, config)
 
-  return loss, smatch_score, amr_comparison_text, f_score, precision, recall, accuracy
+  return loss, unlabelled_smatch, labelled_smatch, amr_comparison_text, f_score, precision, recall, accuracy
 
 def train_model(model: nn.Module,
                 optimizer: Optimizer,
@@ -360,16 +361,20 @@ def train_model(model: nn.Module,
     train_recall = 0
     train_accuracy = 0
     train_smatch = initialize_smatch()
+    train_smatch_labelled = initialize_smatch()
     train_text = ''
     # Only generate amr_string & smatch at the end of training (expensive)
     log_res_train = epoch >= config.LOGGING_START_EPOCH_TRAIN
     log_res_dev = epoch >= config.LOGGING_START_EPOCH_DEV
     for batch in train_data_loader:
-      batch_loss, smatch_score, aux_text, aux_f_score, aux_precision, aux_recall, aux_accuracy = train_step(
+      batch_loss, smatch_score, smatch_score_labelled, aux_text, aux_f_score, aux_precision, aux_recall, aux_accuracy = train_step(
         model, optimizer, vocabs, device, batch, train_logger, config, log_res_train)
       train_smatch[SmatchScore.PRECISION] += smatch_score[SmatchScore.PRECISION]
       train_smatch[SmatchScore.RECALL] += smatch_score[SmatchScore.RECALL]
       train_smatch[SmatchScore.F_SCORE] += smatch_score[SmatchScore.F_SCORE]
+      train_smatch_labelled[SmatchScore.PRECISION] += smatch_score_labelled[SmatchScore.PRECISION]
+      train_smatch_labelled[SmatchScore.RECALL] += smatch_score_labelled[SmatchScore.RECALL]
+      train_smatch_labelled[SmatchScore.F_SCORE] += smatch_score_labelled[SmatchScore.F_SCORE]
       train_text += 'Batch ' + str(no_batches) + ':\n' + aux_text + '\n----\n'
       epoch_loss += batch_loss
       train_f_score += aux_f_score
@@ -383,6 +388,7 @@ def train_model(model: nn.Module,
     train_precision = train_precision / no_batches
     train_recall = train_recall / no_batches
     train_smatch = {score_name: score_value / no_batches for score_name, score_value in train_smatch.items()}
+    train_smatch_labelled = {score_name: score_value / no_batches for score_name, score_value in train_smatch_labelled.items()}
     dev_loss, unlabelled_smatch, logged_text, f_score, precision, recall, accuracy, \
     labelled_smatch, rel_f_score, rel_precision, rel_recall = evaluate_model(
       model, optimizer, vocabs, device, dev_data_loader, eval_logger, config, log_res_dev)
@@ -400,8 +406,9 @@ def train_model(model: nn.Module,
     print('DEV   loss: {}, accuracy: {}%, f_score: {}%, precision: {}%, recall: {}%, smatch: {}%'.format(
       dev_loss, round_res(accuracy), round_res(f_score), round_res(precision),
       round_res(recall), round_res(unlabelled_smatch[SmatchScore.F_SCORE])))
-    print('LABEL f_score: {}%, precision: {}%, recall: {}%, smatch : {}%'.format(round_res(rel_f_score),
-      round_res(rel_precision), round_res(rel_recall), round_res(labelled_smatch[SmatchScore.F_SCORE])))
+    print('LABEL f_score: {}%, precision: {}%, recall: {}%, train smatch: {}%, dev smatch: {}%'.format(round_res(rel_f_score),
+      round_res(rel_precision), round_res(rel_recall), round_res(train_smatch_labelled[SmatchScore.F_SCORE]),
+      round_res(labelled_smatch[SmatchScore.F_SCORE])))
 
 def round_res(result: float):
   result = result * 100

@@ -340,17 +340,17 @@ class AMRDataset(Dataset):
       padded_adj_mats.append(torch_pad(adj_mat, (0, pad_size, 0, pad_size)))
     # TODO: maybe by default do not put (seq_len, batch size) but have some
     # processing method for doing so after loading the data.
-    # TODO: Remove branching
+    # TODO: Remove
     if self.seq2seq_setting:
       new_batch = {
         #TODO: should this be moved to the device here?
-        SENTENCE_KEY: torch.transpose(torch.stack(padded_sentences), 0, 1).to(self.device),
-        CHAR_SENTENCE_KEY: torch.transpose(torch.tensor(padded_char_sentences), 0, 2).to(self.device),
+        SENTENCE_KEY: torch.transpose(torch.stack(padded_sentences), 0, 1),
+        CHAR_SENTENCE_KEY: torch.transpose(torch.tensor(padded_char_sentences), 0, 2),
         # This is left on the cpu for 'pack_padded_sequence'.
         SENTENCE_STR_KEY: padded_initial_sentences,
         SENTENCE_LEN_KEY: torch.tensor(sentence_lengths),
         CHAR_SENTENCE_LEN_KEY: torch.transpose(torch.tensor(char_sentence_lengths), 0, 1),
-        CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts), 0, 1).to(self.device),
+        CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts), 0, 1),
         CONCEPTS_STR_KEY: padded_concepts_string
         }
     else:
@@ -358,7 +358,7 @@ class AMRDataset(Dataset):
         AMR_ID_KEY: amr_ids,
         CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts), 0, 1),
         GLOVE_CONCEPTS_KEY: torch.transpose(torch.stack(padded_glove_concepts), 0, 1),
-        CHAR_CONCEPTS_KEY: torch.transpose(torch.tensor(padded_char_concepts), 0, 2).to(self.device),
+        CHAR_CONCEPTS_KEY: torch.transpose(torch.tensor(padded_char_concepts), 0, 2),
         # This is left on the cpu for 'pack_padded_sequence'.
         CHAR_CONCEPTS_LEN_KEY: torch.transpose(torch.tensor(char_concepts_lengths), 0, 1),
         CONCEPTS_LEN_KEY: torch.tensor(concepts_lengths),

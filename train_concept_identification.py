@@ -209,7 +209,7 @@ def eval_step(model: nn.Module,
   inputs = batch['sentence'].to(device)
   inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts'].to(device)
-  character_inputs = batch["char_sentence"]
+  character_inputs = batch["char_sentence"].to(device)
   character_inputs_lengths = batch["char_sentence_length"]
 
   if config.LSTM_BASED.USE_POINTER_GENERATOR:
@@ -278,7 +278,7 @@ def train_step(model: nn.Module,
   inputs = batch['sentence'].to(device)
   inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts'].to(device)
-  character_inputs = batch["char_sentence"]
+  character_inputs = batch["char_sentence"].to(device)
   character_inputs_lengths = batch["char_sentence_length"]
 
   if config.LSTM_BASED.USE_POINTER_GENERATOR:
@@ -534,7 +534,7 @@ def main(_):
   dev_data_loader = DataLoader(
       dev_dataset, batch_size=FLAGS.dev_batch_size,
       collate_fn=dev_dataset.collate_fn)
-      
+
   criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
   scheduler = None
 

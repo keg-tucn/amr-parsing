@@ -19,6 +19,7 @@ class CharacterLevelEmbedding(nn.Module):
   def __init__(self, config: CfgNode):
     super(CharacterLevelEmbedding, self).__init__()
     self.embedding = nn.Embedding(NUMBER_OF_ASCII_CHARACTERS, config.CHAR_EMB_DIM)
+    #TODO: biGRU
     self.gru = nn.GRU(config.CHAR_EMB_DIM, config.CHAR_HIDDEN_SIZE)
     self.char_hidden_size = config.CHAR_HIDDEN_SIZE
 
@@ -261,6 +262,7 @@ class DecoderStep(nn.Module):
 
     classifier_input = torch.cat(
       (previous_embedding, decoder_state[0], context_vector), dim=-1)
+    #TODO: rename to logits
     predictions = self.classifier(classifier_input)
 
     # generation probability
@@ -351,6 +353,7 @@ class Decoder(nn.Module):
     # through a linear layer.
     decoder_state = self.compute_initial_decoder_state(encoder_output[1])
     # Create a batch of initial tokens.
+    #TODO: investigate if BOS is actually in the vocabulary
     previous_token = torch.full((batch_size,), BOS_IDX).to(device=self.device)
 
     if self.config.USE_POINTER_GENERATOR:

@@ -19,6 +19,7 @@ UNK = '<unk>'
 EOS = '<eos>'
 BOS = '<bos>'
 PAD_IDX = 0
+#TODO: Investigate if this is correct index
 BOS_IDX = 1
 
 AMR_ID_KEY = 'amr_id'
@@ -339,8 +340,10 @@ class AMRDataset(Dataset):
       padded_adj_mats.append(torch_pad(adj_mat, (0, pad_size, 0, pad_size)))
     # TODO: maybe by default do not put (seq_len, batch size) but have some
     # processing method for doing so after loading the data.
+    # TODO: Remove branching
     if self.seq2seq_setting:
       new_batch = {
+        #TODO: should this be moved to the device here?
         SENTENCE_KEY: torch.transpose(torch.stack(padded_sentences), 0, 1).to(self.device),
         CHAR_SENTENCE_KEY: torch.transpose(torch.tensor(padded_char_sentences), 0, 2).to(self.device),
         # This is left on the cpu for 'pack_padded_sequence'.

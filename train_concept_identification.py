@@ -207,7 +207,7 @@ def eval_step(model: nn.Module,
               batch: Dict[str, torch.tensor],
               config: CfgNode, device):
   inputs = batch['sentence'].to(device)
-  inputs_lengths = batch['sentence_lengts'].to(device)
+  inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts'].to(device)
   character_inputs = batch["char_sentence"]
   character_inputs_lengths = batch["char_sentence_length"]
@@ -276,7 +276,7 @@ def train_step(model: nn.Module,
                device: str,
                teacher_forcing_ratio: float=0.0):
   inputs = batch['sentence'].to(device)
-  inputs_lengths = batch['sentence_lengts'].to(device)
+  inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts'].to(device)
   character_inputs = batch["char_sentence"]
   character_inputs_lengths = batch["char_sentence_length"]
@@ -534,13 +534,7 @@ def main(_):
   dev_data_loader = DataLoader(
       dev_dataset, batch_size=FLAGS.dev_batch_size,
       collate_fn=dev_dataset.collate_fn)
-
-  if FLAGS.config:
-    config_file_name = FLAGS.config
-    config_path = os.path.join('configs', config_file_name)
-    cfg.merge_from_file(config_path)
-    cfg.freeze()
-
+      
   criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
   scheduler = None
 

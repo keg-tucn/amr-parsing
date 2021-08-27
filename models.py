@@ -3,7 +3,6 @@ import random
 import torch
 import torch.nn as nn
 from yacs.config import CfgNode
-
 from data_pipeline.glove_embeddings import get_weight_matrix
 
 # this size came from the highest code of a character that was found in the data set
@@ -12,6 +11,7 @@ NUMBER_OF_ASCII_CHARACTERS = 12400
 
 #TODO: move this.
 BOS_IDX = 1
+EOS_IDX = 1
 
 class CharacterLevelEmbedding(nn.Module):
 
@@ -363,6 +363,9 @@ class Decoder(nn.Module):
     all_logits = torch.zeros(
       (output_seq_len, batch_size, all_logits_vocab_size)).to(device=self.device)
     all_predictions = torch.zeros((output_seq_len, batch_size))
+
+
+    #(batch size, hidden size, beam_size)
     for i in range(output_seq_len):
       decoder_state, logits = self.decoder_step(
         previous_token, decoder_state, encoder_states, attention_mask, indices, extended_vocab_size, batch_size, self.device)
@@ -378,21 +381,258 @@ class Decoder(nn.Module):
       else:
         previous_token = predicted_token
       all_logits[i] = logits
-
+      
     return all_logits, all_predictions
+
+##### aici o sa lucrez eu
+
+
+
+class BeamDecoder(nn.Module):
+
+  def __init__(self,
+                output_vocab_size: int,
+                config: CfgNode,
+                device: str = "cpu"):
+    super(BeamDecoder, self).__init__()
+    self.device = device
+    self.output_vocab_size = output_vocab_size
+    self.decoder_step = DecoderStep(output_vocab_size, config)
+    self.initial_state_layer_h = nn.Linear(
+      config.HIDDEN_SIZE, config.HIDDEN_SIZE)
+    self.initial_state_layer_c = nn.Linear(
+      config.HIDDEN_SIZE, config.HIDDEN_SIZE)
+    self.config = config
+
+  
+  def compute_initial_decoder_state(self,
+                                    last_encoder_states: Tuple[torch.Tensor, torch.Tensor]):
+    """Create the initial decoder state by passing the last encoder state though
+    a linear layer. Since it's an LSTM, we'll be passing both the c and h vectors.
+
+    Args:
+      last_encoder_states: Encoder c and h for the last element in the sequence.
+        Both c and h have the shape (num_enc_layers, batch size, hidden size).
+    """
+    # Only use the value from the last layer, since we simply use an LSTM cell
+    # (only layer) in the decoder.
+    enc_h = last_encoder_states[0][-1]
+    enc_c = last_encoder_states[1][-1]
+    initial_h = self.initial_state_layer_h(enc_h)
+    initial_c = self.initial_state_layer_h(enc_c)
+    return (initial_h, initial_c)
+
+
+  def forward(self,
+              encoder_output: Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
+              attention_mask: torch.Tensor,
+              extended_vocab_size: int,
+              indices: torch.Tensor,
+              teacher_forcing_ratio: float = 0.0,
+              decoder_inputs: torch.Tensor = None,
+              max_out_length: int = None):
+    """Bahdanau style decoder.
+
+    Args:
+      encoder_output: Encoder output consisting of the encoder states, a tensor
+        with shape (input seq len, batch size, hidden size) and the last states
+        of the encoder (h, c), where both tensors have shapes
+        (num_enc_layers, batch size, hidden size).
+      attention_mask: Attention mask (tensor of bools), shape
+        (batch size, input seq len).
+      indices: the index of each word in the input sequence corresponding to the
+        extended vocab. This is needed in order to compute the probability for oov
+        words that appeared in source sequence.
+      decoder_inputs (torch.Tensor): Decoder input for each step, with shape
+        (output seq len, batch size). These should be sent on the train flow,
+        and consist of the gold output sequence. On the inference flow, they
+        should not be used (None by default).
+      max_out_length: Maximum output length (sent on the inference flow), for
+        the sequences to have a fixed size in the batch. None by default.
+    """
+    #assert self.training == False
+    
+    if self.training:
+      output_seq_len = decoder_inputs.shape[0]
+    else:
+      output_seq_len = max_out_length
+
+
+    encoder_states = encoder_output[0]
+    batch_size = encoder_states.shape[1]
+    # Create the initial decoder state by passing the last encoder state
+    # through a linear layer.
+    decoder_state = self.compute_initial_decoder_state(encoder_output[1])
+    # Create a batch of initial tokens.
+
+    beam_width = 3
+    hidden_size = encoder_output[0].shape[2]
+
+    #creez matricea care retine daca am ajuns cu propozitia la EOS
+    eos_reach_check_prev = torch.full((batch_size * beam_width,), True).to(device=self.device)
+    eos_reach_check = torch.full((batch_size * beam_width,), True).to(device=self.device)
+
+    previous_token = torch.full((batch_size,), BOS_IDX).to(device=self.device)
+
+    previous_token_index = torch.zeros((batch_size * beam_width,)).to(device=self.device)
+    previous_token_values = torch.zeros((batch_size * beam_width,)).to(device=self.device)
+
+    if self.config.USE_POINTER_GENERATOR:
+      # When using pointer generator we also need the words in the input sequence
+      # therefore we use the extended vocab
+      all_logits_vocab_size = extended_vocab_size
+    else:
+      all_logits_vocab_size = self.output_vocab_size
+
+    
+    all_predictions = torch.zeros((output_seq_len, batch_size, beam_width))
+
+    #fac primul pas de decoding, ca sa generez primele predictii
+    decoder_state, logits = self.decoder_step(
+        previous_token, decoder_state, encoder_states, attention_mask, indices, extended_vocab_size, batch_size, self.device)
+
+    scores = logits.log_softmax(dim=-1)
+
+    previous_token_values, previous_token_index = scores.topk(beam_width , dim=-1)
+
+    beam_size = beam_width# :)))))
+
+     
+    previous_token_index = previous_token_index.view((batch_size * beam_width))
+    previous_token_values = previous_token_values.view((batch_size * beam_width))
+
+
+    eos_reach_check_prev = (previous_token_index != EOS_IDX)# s-ar putea sarii peste pasul asta, deoarece nu deduce din prima eos
+    
+
+    all_predictions[0] = previous_token_index.view(batch_size, beam_width)
+    
+
+    decoder_state = (
+                      decoder_state[0].repeat_interleave(beam_width, dim = 0), 
+                      decoder_state[1].repeat_interleave(beam_width, dim = 0)
+    )
+
+    encoder_states = encoder_states.repeat_interleave(beam_width, dim = 1)
+    
+    indices = indices.repeat_interleave(beam_width, dim = 0)
+    attention_mask = attention_mask.repeat_interleave(beam_width, dim = 0)
+
+    
+    for i in range(1, output_seq_len):
+      decoder_state, logits = self.decoder_step(
+        previous_token_index, decoder_state, encoder_states, attention_mask, indices, extended_vocab_size, batch_size * beam_width, self.device)
+      # Get predicted token.
+      
+      scores = logits.log_softmax(dim=-1)
+
+      # adun probabilitatiile trecute ale elementelor din care s-a generat elementul curent
+      # am adaugat inmultirea cu eos_reach
+
+      scores = torch.where(eos_reach_check_prev.unsqueeze(-1), scores, torch.zeros(scores.shape))
+      
+      previous_values_repeated = previous_token_values.unsqueeze(dim = -1).repeat_interleave(extended_vocab_size, dim = -1)
+
+      scores += previous_values_repeated
+      scores_without_normalization = scores
+
+      # normalizare scoruri
+      normalization_constant = (i + 1) ** 0.7
+      normalization_matrix = torch.where(
+                                          eos_reach_check_prev.unsqueeze(-1), 
+                                          torch.full(scores.shape,normalization_constant), 
+                                          torch.ones(scores.shape)
+      )
+
+      
+      scores /= normalization_matrix
+      
+
+      # realizez un selectia primelor beam_width probabilitati si indexii lor in vectorul concatenat
+      predicted_token_values, predicted_token_index = scores.view(batch_size, beam_width * extended_vocab_size).topk(beam_width, dim = -1)
+      
+      breakpoint()
+
+      sddfghsfjs
+      # mai trebuie sa iei valorile trecute si sa modifici acumularea scorului
+      
+      #actualizez tokenii care vor fi folositi in urmatorul pas la valorile noi
+      previous_token_index = predicted_token_index.view(batch_size * beam_width)
+
+      #calculez tensorul de pozitii din pasul anterior
+      positions_in_previous = previous_token_index // extended_vocab_size 
+
+      #normalizez predictiile in intervalul vocabularui, inainte putea fii pana la beam_width * extended_vocab_size
+      
+      previous_token_index %= extended_vocab_size
+
+
+      #actualizez valorile prezise trecute
+      previous_token_values = predicted_token_values.view(batch_size * beam_width)
+
+       
+      #salvez predictiile curente 
+      all_predictions[i] = previous_token_index.view(batch_size, beam_width) # vezi cum il tii, ca sa poti merge inapoi
+
+
+    
+      #calculez pozitiile pe care trebuie sa le selectez din decoding state pentru predictiile curente
+      decoder_index = positions_in_previous + ( torch.arange(batch_size * beam_width) // beam_width ) * beam_width
+
+
+
+      #realizez selectia decoder_state_ului pentru pasul urmator
+
+      decoder_state= (
+                        decoder_state[0].index_select(dim = 0, index = decoder_index),
+                        decoder_state[1].index_select(dim = 0, index = decoder_index)
+      )
+
+      #selectez in functie de indexi starea trecuta
+      eos_reach_check_prev = eos_reach_check_prev.index_select(dim = 0, index = decoder_index)
+
+
+      #calculez eos_check_prev = eos_check_curent and eos_check_trecut
+      #!!!! valoarea False reprezinta ca am ajuns la EOS (de aceea folosesc and)
+      eos_reach_check_prev = eos_reach_check_prev.logical_and(previous_token_index != EOS_IDX)
+      
+    """
+    ana are mere EOS dfsdab sfdfs
+    ana are EOS dssdds fsfs nedff
+    ana mere verzi are EOS xcvxv
+    """
+    
+
+    return None, all_predictions
+
+#mergem ca intr un arbore in spate si scoatem solutia
+#solutia o sa fie de dimensiunea mai mica, impartit la beam width
+
+##### aici termin de lucrat
+
+
 
 class Seq2seq(nn.Module):
 
   def __init__(self,
                input_vocab_size: int,
                output_vocab_size: int,
+               beam : bool,# pt true o sa faca beam deconding
                # config CONCEPT_IDENTIFICATION.LSTM_BASED
                config: CfgNode,
                glove_embeddings: Dict = None,
                device="cpu"):
     super(Seq2seq, self).__init__()
     self.encoder = Encoder(input_vocab_size, config, glove_embeddings=glove_embeddings)
-    self.decoder = Decoder(output_vocab_size, config, device=device)
+
+
+    if beam == True: #and not self.traning: Am scos self.training fiindca nu il vede
+      # aici am adaugat beam deconding in seq2seq
+      self.decoder = BeamDecoder(output_vocab_size, config, device=device) 
+    else: 
+      self.decoder = Decoder(output_vocab_size, config, device=device)
+
+
     self.device = device
     if config.USE_POINTER_GENERATOR:
       self.encoder.embedding.weight = self.decoder.decoder_step.output_embedding.weight

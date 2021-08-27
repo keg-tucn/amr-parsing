@@ -79,7 +79,9 @@ flags.DEFINE_boolean('transformer',
 flags.DEFINE_boolean('train_is_test',
                      default=False,
                      help=('Train and test on same dataset.'))
-
+flags.DEFINE_boolean('beam',
+                     default=False,
+                     help=('Turn beam search option on.'))
 
 def compute_loss(criterion, logits, gold_outputs):
   """Computes cross entropy loss.
@@ -207,7 +209,7 @@ def eval_step(model: nn.Module,
               batch: Dict[str, torch.tensor],
               config: CfgNode, device):
   inputs = batch['sentence'].to(device)
-  inputs_lengths = batch['sentence_lengts'].to(device)
+  inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts'].to(device)
   character_inputs = batch["char_sentence"]
   character_inputs_lengths = batch["char_sentence_length"]
@@ -241,7 +243,11 @@ def eval_step(model: nn.Module,
   gold_output_len = gold_outputs.shape[0]
   padded_gold_outputs = torch_pad(
     gold_outputs, (0, 0, 0, max_out_len - gold_output_len))
-  loss = compute_loss(criterion, logits, padded_gold_outputs)
+
+  if FLAGS.beam == False:
+    loss = compute_loss(criterion, logits, padded_gold_outputs)
+  else:
+    loss = 0.0#vezi ce shape are loss ul si fa aceeasi chestie cu 0.0
   return f_score, loss
 
 
@@ -276,7 +282,7 @@ def train_step(model: nn.Module,
                device: str,
                teacher_forcing_ratio: float=0.0):
   inputs = batch['sentence'].to(device)
-  inputs_lengths = batch['sentence_lengts'].to(device)
+  inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts'].to(device)
   character_inputs = batch["char_sentence"]
   character_inputs_lengths = batch["char_sentence_length"]
@@ -479,7 +485,7 @@ def main(_):
   if not FLAGS.dummy:
     if FLAGS.train_subsets is None:
       train_subsets = ['bolt', 'cctv', 'dfa', 'dfb', 'guidelines',
-                      'mt09sdl', 'proxy', 'wb', 'xinhua']
+                      'mt09sdl', 'proxy', 'wb', 'xinhua']             
     else:
       # Take subsets from flag passed.
       train_subsets = FLAGS.train_subsets.split(',')
@@ -571,11 +577,12 @@ def main(_):
     "CONCEPT_IDENTIFICATION.LOAD_PATH", "temp/transformer.pth"]
     cfg.merge_from_list(opts)
     optimizer = init_optimizer(model)
-
+    
   else:
     model = Seq2seq(
       input_vocab_size,
       output_vocab_size,
+      FLAGS.beam,# aici am adaugat flag-ul pt beam search(True pt beam search)
       concept_identification_config.LSTM_BASED,
       glove_embeddings.embeddings_vocab if FLAGS.use_glove else None,
       device=device).to(device)

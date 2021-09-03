@@ -368,7 +368,7 @@ class Decoder(nn.Module):
     all_predictions = torch.zeros((output_seq_len, batch_size))
 
 
-    #(batch size, hidden size, beam_size)
+    #(batch size, hidden size, beam_width)
     for i in range(output_seq_len):
       decoder_state, logits = self.decoder_step(
         previous_token, decoder_state, encoder_states, attention_mask, indices, extended_vocab_size, batch_size, self.device)
@@ -387,7 +387,6 @@ class Decoder(nn.Module):
       
     return all_logits, all_predictions
 
-##### aici o sa lucrez eu
 
 
 
@@ -468,16 +467,20 @@ class BeamDecoder(nn.Module):
     decoder_state = self.compute_initial_decoder_state(encoder_output[1])
     # Create a batch of initial tokens.
 
+    #the beam dimension
     beam_width = 3
     hidden_size = encoder_output[0].shape[2]
 
-    #creez matricea care retine daca am ajuns cu propozitia la EOS
-    eos_reach_check_prev = torch.full((batch_size * beam_width,), True).to(device=self.device)
-    eos_reach_check = torch.full((batch_size * beam_width,), True).to(device=self.device)
+    #create the 1D tensor that tells us if we reached eos for each sentence
+    eos_reach_check_prev = torch.full((batch_size * beam_width,), False).to(device=self.device)
 
     previous_token = torch.full((batch_size,), BOS_IDX).to(device=self.device)
 
+
+    #create the 1D tensor that keeps the predicted index
     previous_token_index = torch.zeros((batch_size * beam_width,)).to(device=self.device)
+
+    #create the 1D tensor that keeps the value of the probability for the prediction of the index
     previous_token_values = torch.zeros((batch_size * beam_width,)).to(device=self.device)
 
     if self.config.USE_POINTER_GENERATOR:
@@ -487,131 +490,194 @@ class BeamDecoder(nn.Module):
     else:
       all_logits_vocab_size = self.output_vocab_size
 
-    
-    all_predictions = torch.zeros((output_seq_len, batch_size, beam_width))
+    #keeps the indices picked by beam-seach (the first beam-with indices) 
+    all_predictions_beam = torch.zeros((output_seq_len, batch_size * beam_width), dtype = torch.int64).to(device=self.device)
 
-    #fac primul pas de decoding, ca sa generez primele predictii
+    #keeps the final result
+    all_predictions = torch.zeros((output_seq_len, batch_size), dtype = torch.int64).to(device=self.device)
+
+    #the first decoding step to generate the first predictions
+    #the first step is different because the input size is independent of beam-width
     decoder_state, logits = self.decoder_step(
         previous_token, decoder_state, encoder_states, attention_mask, indices, extended_vocab_size, batch_size, self.device)
 
+    #compute the probabilities
     scores = logits.log_softmax(dim=-1)
 
+    #select top beam_width values and positions from the probability distribution
     previous_token_values, previous_token_index = scores.topk(beam_width , dim=-1)
 
-    beam_size = beam_width# :)))))
-
-     
+    #change the shape of the predictions to be compatible with the decoder input
     previous_token_index = previous_token_index.view((batch_size * beam_width))
     previous_token_values = previous_token_values.view((batch_size * beam_width))
 
-
-    eos_reach_check_prev = (previous_token_index != EOS_IDX)# s-ar putea sarii peste pasul asta, deoarece nu deduce din prima eos
+    #check if eos is reached for each sentence
+    #we could skip this assuming all sentences have at least one word
+    eos_reach_check_prev = (previous_token_index == EOS_IDX)
     
-
-    all_predictions[0] = previous_token_index.view(batch_size, beam_width)
+    #save the indecies of the first prediction
+    all_predictions_beam[0] = previous_token_index.view(batch_size * beam_width)
     
-
+    #repeat each decoder_state beam_with times
+    #([batch_size, decoder_hidden]) -> ([batch_size * beam_width, decoder_hidden])
     decoder_state = (
                       decoder_state[0].repeat_interleave(beam_width, dim = 0), 
                       decoder_state[1].repeat_interleave(beam_width, dim = 0)
     )
 
+    #repeat each encoder_state beam_with times
+    #([out_seq_len, batch_size, encoder_hidden]) -> ([out_seq_len, batch_size * beam_width, encoder_hidden])
     encoder_states = encoder_states.repeat_interleave(beam_width, dim = 1)
     
+    #repeat the indices and the attention_mask, same as above
     indices = indices.repeat_interleave(beam_width, dim = 0)
     attention_mask = attention_mask.repeat_interleave(beam_width, dim = 0)
 
-    
+
     for i in range(1, output_seq_len):
+      #generate the prediction and the new decoding state
       decoder_state, logits = self.decoder_step(
         previous_token_index, decoder_state, encoder_states, attention_mask, indices, extended_vocab_size, batch_size * beam_width, self.device)
       # Get predicted token.
       
+      #compute the probabilities for the current prediction
       scores = logits.log_softmax(dim=-1)
-
-      # adun probabilitatiile trecute ale elementelor din care s-a generat elementul curent
-      # am adaugat inmultirea cu eos_reach
-
-      scores = torch.where(eos_reach_check_prev.unsqueeze(-1), scores, torch.zeros(scores.shape))
       
+      #repeat each probability from the previous step beam_width times
       previous_values_repeated = previous_token_values.unsqueeze(dim = -1).repeat_interleave(extended_vocab_size, dim = -1)
 
-      scores += previous_values_repeated
-      scores_without_normalization = scores
-
-      # normalizare scoruri
-      normalization_constant = (i + 1) ** 0.7
-      normalization_matrix = torch.where(
-                                          eos_reach_check_prev.unsqueeze(-1), 
-                                          torch.full(scores.shape,normalization_constant), 
-                                          torch.ones(scores.shape)
+  
+      # make sure if reached eos we don't add anything to the score
+      scores = torch.where(
+                            eos_reach_check_prev.unsqueeze(-1),
+                            torch.zeros(scores.shape), 
+                            scores 
       )
 
-      
+
+      #compute the score from current probabilities and the previous score
+      scores += previous_values_repeated
+
+
+      #copy the score before the normalization step
+      scores_without_normalization = scores.clone()
+
+      #normalize the score
+
+      normalization_constant = (i + 1) ** 0.7
+
+      normalization_matrix = torch.where(
+                                          eos_reach_check_prev.unsqueeze(-1),
+                                          torch.ones(scores.shape), 
+                                          torch.full(scores.shape, normalization_constant)                                      
+      )
+
       scores /= normalization_matrix
       
 
-      # realizez un selectia primelor beam_width probabilitati si indexii lor in vectorul concatenat
+      #select the first beam_width probabilities and their indices from the normalized scores
+      #the view function puts all the probabilities that are related to a sentence in the same tensor so we can pick the first beam_width indices and values
       predicted_token_values, predicted_token_index = scores.view(batch_size, beam_width * extended_vocab_size).topk(beam_width, dim = -1)
-      
-      breakpoint()
+    
+       
 
-      sddfghsfjs
-      # mai trebuie sa iei valorile trecute si sa modifici acumularea scorului
-      
-      #actualizez tokenii care vor fi folositi in urmatorul pas la valorile noi
-      previous_token_index = predicted_token_index.view(batch_size * beam_width)
+      # modify the shape of the unnormalized score to corespound with the shape of the normalized score 
+      # ([batch_size * beam_width, extended_vocab_size]) -> ([batch_size, beam_width * extended_vocab_size])
+      scores_without_normalization = scores_without_normalization.view(batch_size, beam_width * extended_vocab_size)
 
-      #calculez tensorul de pozitii din pasul anterior
-      positions_in_previous = previous_token_index // extended_vocab_size 
 
-      #normalizez predictiile in intervalul vocabularui, inainte putea fii pana la beam_width * extended_vocab_size
+
+      #aleg doar acele probabilitati care corespund celor mai mari topk scoruri
+      #predicted_token_index are size ul (batch_size, beam_width)
+      #astfel in ultima dimensiune din tensorul final raman doar beam_width probabilitati nenormalizate
+
+      #select the probabilities that corespound to the topk scores for each prediction
+      #predicted_token_index has size (batch_size, beam_width)
+      #([batch_size, beam_width * extended_vocab_size]) -> ([batch_size, beam_width])
+      scores_without_normalization = scores_without_normalization.gather(dim = -1, index = predicted_token_index)
+
+      #modify the dimensions ([batch_size, beam_width]) -> ([batch_size * beam_width])
+      scores_without_normalization = scores_without_normalization.view(batch_size * beam_width)
+
+      predicted_token_values = predicted_token_values.view(batch_size * beam_width)
+
       
+
+      #select the value that will be added to the new scores the normalized one or the unnormalized one
+      previous_token_values = torch.where(
+                                            eos_reach_check_prev,
+                                            predicted_token_values,
+                                            scores_without_normalization                                
+      )
+
+
+
+
+      #save the predicted indices
+      all_predictions_beam[i] = predicted_token_index.view(batch_size * beam_width)
+
+
+      #get the positions for every index that was used to make a new prediction for a sentence
+      positions_in_previous = previous_token_index.div(extended_vocab_size, rounding_mode='floor')
+
+      #normalize the predictions to be in the (0, extended_vocab_size) range, before was (0, beam_width * extended_vocab_size)
       previous_token_index %= extended_vocab_size
 
-
-      #actualizez valorile prezise trecute
-      previous_token_values = predicted_token_values.view(batch_size * beam_width)
-
-       
-      #salvez predictiile curente 
-      all_predictions[i] = previous_token_index.view(batch_size, beam_width) # vezi cum il tii, ca sa poti merge inapoi
-
-
-    
-      #calculez pozitiile pe care trebuie sa le selectez din decoding state pentru predictiile curente
-      decoder_index = positions_in_previous + ( torch.arange(batch_size * beam_width) // beam_width ) * beam_width
+      #get the positions in the batch-wise index tensor
+      decoder_index = positions_in_previous + torch.arange(batch_size * beam_width).div(beam_width, rounding_mode='floor') * beam_width
 
 
 
-      #realizez selectia decoder_state_ului pentru pasul urmator
+      #select the decoder state for the new decoding step
 
       decoder_state= (
                         decoder_state[0].index_select(dim = 0, index = decoder_index),
                         decoder_state[1].index_select(dim = 0, index = decoder_index)
       )
 
-      #selectez in functie de indexi starea trecuta
+      #select the previous state of the eos reached
       eos_reach_check_prev = eos_reach_check_prev.index_select(dim = 0, index = decoder_index)
 
 
-      #calculez eos_check_prev = eos_check_curent and eos_check_trecut
-      #!!!! valoarea False reprezinta ca am ajuns la EOS (de aceea folosesc and)
-      eos_reach_check_prev = eos_reach_check_prev.logical_and(previous_token_index != EOS_IDX)
-      
-    """
-    ana are mere EOS dfsdab sfdfs
-    ana are EOS dssdds fsfs nedff
-    ana mere verzi are EOS xcvxv
-    """
+      #calculate eos_check_prev = eos_check_present or eos_check_past
+      #update eos_reach_check_prev
+      eos_reach_check_prev = eos_reach_check_prev.logical_or(previous_token_index == EOS_IDX)
     
+    
+    
+
+    #get the last predictions
+    #size ([batch_size * beam_width])
+    final_predictions = predicted_token_values
+
+    #separate the values for each sentence into one dimension, get argmax on it
+    #([batch_size * beam_width]) -> ([batch_size, beam_width]) -> ([batch_size])
+
+    max_predictions_index = final_predictions.view(batch_size, beam_width).argmax(dim = -1)
+
+    
+    
+    #get the vector for adding the positions in batch-wize tensor of previous predictions
+    possition_for_adding = torch.arange(batch_size) * beam_width
+
+    #pornind de la predictia finala, argmax
+    #selectez mergand spre pozitia anterioara in vectorul de predictii beam valorile care au generat predictia curenta
+
+    #starting from the final prediction
+    #go backwards in the predictions vector(that keeps a beam prediction for each sentence)
+    #keep only the predictions that led us to the final prediction
+    for i in range(output_seq_len - 1, -1, -1): # from output_seq_len - 1 to 0
+      
+      max_predictions_index += possition_for_adding
+
+      index_values_in_beam_vocab = all_predictions_beam[i].index_select(dim = -1, index = max_predictions_index)
+
+      all_predictions[i] = index_values_in_beam_vocab % extended_vocab_size
+
+      max_predictions_index = index_values_in_beam_vocab.div(extended_vocab_size, rounding_mode='floor')
 
     return None, all_predictions
 
-#mergem ca intr un arbore in spate si scoatem solutia
-#solutia o sa fie de dimensiunea mai mica, impartit la beam width
-
-##### aici termin de lucrat
 
 
 

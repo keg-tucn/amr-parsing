@@ -52,14 +52,16 @@ class CharacterLevelEmbedding(nn.Module):
 class Encoder(nn.Module):
 
 
-  def __init__(self, input_vocab_size, config: CfgNode, use_bilstm=False, glove_embeddings: Dict=None):
+  def __init__(self, input_vocab_size, lemmas_vocab_size, config: CfgNode, use_bilstm=False, glove_embeddings: Dict=None):
     super(Encoder, self).__init__()
     self.embedding = nn.Embedding(input_vocab_size, config.EMB_DIM)
+    self.lemma_embedding = nn.Embedding(lemmas_vocab_size, config.LEMMA_EMB_DIM)
     self.use_glove = config.GLOVE_EMB_DIM != 0 and glove_embeddings is not None
     self.use_trainable_embeddings = config.EMB_DIM != 0
     # If config.CHAR_EMB_DIM = 0, then the CharacterEmbedding will not be used char_emb from config.
     self.use_character_level_embeddings = config.CHAR_EMB_DIM != 0
     self.drop_out = config.ENCODER_DROPOUT_RATE
+    self.use_lemma = config.LEMMA_EMB_DIM != 0
     if self.use_glove:
       self.glove = nn.Embedding(len(glove_embeddings.keys()), config.GLOVE_EMB_DIM)
       weight_matrix = get_weight_matrix(glove_embeddings, config.GLOVE_EMB_DIM)
@@ -73,8 +75,11 @@ class Encoder(nn.Module):
     elif self.use_character_level_embeddings:
       emb_dim += config.CHAR_HIDDEN_SIZE
 
+    if self.use_lemma:
+      emb_dim += config.LEMMA_EMB_DIM
     if self.use_trainable_embeddings:
       emb_dim += config.EMB_DIM
+
     self.lstm = nn.LSTM(
       emb_dim, config.HIDDEN_SIZE, config.NUM_LAYERS,
       bidirectional=use_bilstm, dropout=config.ENCODER_DROPOUT_RATE)
@@ -82,7 +87,8 @@ class Encoder(nn.Module):
       self.character_level_embeddings = CharacterLevelEmbedding(config)
 
   def forward(self, inputs: torch.Tensor, input_lengths: torch.Tensor,
-              character_inputs: torch.Tensor=None, character_inputs_lengths: torch.Tensor=None):
+              character_inputs: torch.Tensor=None, character_inputs_lengths: torch.Tensor=None,
+              lemma_inputs: torch.Tensor=None):
     """
     Args:
         inputs (torch.Tensor): Inputs (input seq len, batch size).
@@ -99,21 +105,36 @@ class Encoder(nn.Module):
       input_lengths field, regardless of what the length with padding actually
       is.
     """
+    # word trained embbedings
     embedded_inputs = self.embedding(inputs) if self.use_trainable_embeddings else None
+    # GloVe embbedings
     if self.use_glove and self.use_trainable_embeddings:
       glove_embedded_inputs = self.glove(inputs)
       embedded_inputs = torch.cat((embedded_inputs, glove_embedded_inputs), dim=-1)
     if self.use_glove and not self.use_trainable_embeddings:
       embedded_inputs = self.glove(inputs)
-    if self.use_character_level_embeddings:
+    # Character Level embbedings
+    if self.use_character_level_embeddings and embedded_inputs != None:
       # compute character level embeddings
       character_embedded_inputs = self.character_level_embeddings(character_inputs, character_inputs_lengths)
       # concatenate embedded_inputs with character level embeddings on the last dimention
       embedded_inputs = torch.cat((embedded_inputs, character_embedded_inputs), dim=-1)
+    if self.use_character_level_embeddings  and embedded_inputs == None:
+      embedded_inputs = self.character_level_embeddings(character_inputs, character_inputs_lengths)
+
+    # Lemma embbedings
+    if self.use_lemma and embedded_inputs != None:
+      # compute character level embeddings
+      lemma_embedded_inputs = self.lemma_embedding(lemma_inputs)
+      embedded_inputs = torch.cat((embedded_inputs, lemma_embedded_inputs), dim=-1)
+    if self.use_lemma and embedded_inputs == None:
+      embedded_inputs = self.embedding(lemma_inputs)
+
     if self.training:
       # Add dropout to lstm input.
       dropout = nn.Dropout(p=self.drop_out)
       embedded_inputs = dropout(embedded_inputs)
+
     #TODO: see if enforce_sorted would help to be True (eg efficiency).
     packed_embedded = nn.utils.rnn.pack_padded_sequence(
       embedded_inputs, input_lengths, enforce_sorted = False)
@@ -346,7 +367,7 @@ class Decoder(nn.Module):
     else:
       output_seq_len = max_out_length
     encoder_states = encoder_output[0]
-    batch_size = encoder_states.shape[1]
+     batch_size = encoder_states.shape[1]
     # Create the initial decoder state by passing the last encoder state
     # through a linear layer.
     decoder_state = self.compute_initial_decoder_state(encoder_output[1])
@@ -386,12 +407,14 @@ class Seq2seq(nn.Module):
   def __init__(self,
                input_vocab_size: int,
                output_vocab_size: int,
+               lemmas_vocab_size: int,
                # config CONCEPT_IDENTIFICATION.LSTM_BASED
                config: CfgNode,
                glove_embeddings: Dict = None,
                device="cpu"):
     super(Seq2seq, self).__init__()
-    self.encoder = Encoder(input_vocab_size, config, glove_embeddings=glove_embeddings)
+    self.encoder = Encoder(input_vocab_size, lemmas_vocab_size, config, glove_embeddings=glove_embeddings)
+    print("output_vocab_size ", output_vocab_size)
     self.decoder = Decoder(output_vocab_size, config, device=device)
     self.device = device
     if config.USE_POINTER_GENERATOR:
@@ -413,7 +436,8 @@ class Seq2seq(nn.Module):
               gold_output_sequence: torch.Tensor = None,
               max_out_length: int = None,
               character_inputs: torch.Tensor=None,
-              character_inputs_lengths: torch.Tensor=None):
+              character_inputs_lengths: torch.Tensor=None,
+              lemma_inputs: torch.Tensor=None):
     """Forward seq2seq.
 
     Args:
@@ -429,9 +453,9 @@ class Seq2seq(nn.Module):
       predictions of shape (out seq len, batch size, output no of classes).
     """
     if self.use_character_level_embeddings:
-      encoder_output = self.encoder(input_sequence, input_lengths, character_inputs, character_inputs_lengths)
+      encoder_output = self.encoder(input_sequence, input_lengths, character_inputs, character_inputs_lengths, lemma_inputs)
     else:
-      encoder_output = self.encoder(input_sequence, input_lengths)
+      encoder_output = self.encoder(input_sequence, input_lengths, lemma_inputs=lemma_inputs)
     input_seq_len = input_sequence.shape[0]
     attention_mask = self.create_mask(input_lengths, input_seq_len)
     indices = indices.to(device=self.device) if indices is not None else None
@@ -449,30 +473,32 @@ class DenseMLP(nn.Module):
   MLP from Dependency parsing as Head Selection.
   """
 
-  def __init__(self, config: CfgNode):
+  def __init__(self,
+               node_repr_size:int,
+               config: CfgNode):
     super(DenseMLP, self).__init__()
+    self.Ua = nn.Linear(node_repr_size, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
+    self.Wa = nn.Linear(node_repr_size, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
     self.va = nn.Linear(config.DENSE_MLP_HIDDEN_SIZE, 1, bias=False)
 
 
-  def forward(self, classifier_input):
+  def forward(self, parent: torch.Tensor, child: torch.Tensor):
     """
     Args:
-        classifier_input: arc representation of Dense MLP hidden size for each
-          concept pair; shape (batch_size, seq_len, seq_len, dense_mlp_hidden_size)
+        parent: Parent node representation (batch size, node repr size).
+        child: Child node representation (batch size, node repr size).
     Returns
-      edge_score: (batch size, seq_len, seq_len).
+      edge_score: (batch size).
     """
-    edge_score = self.va(classifier_input)
-    # Drop last dimension (we don't want vectors of 1 element).
-    return edge_score.squeeze(-1)
+    edge_score = self.va(torch.tanh(self.Ua(parent) + self.Wa(child)))
+    # Return score of (batch size), not (batch size, 1).
+    return edge_score[:,0]
 
 class EdgeScoring(nn.Module):
 
   def __init__(self, config: CfgNode):
     super(EdgeScoring, self).__init__()
-    self.dense_mlp = DenseMLP(config)
-    self.Ua = nn.Linear(2 * config.HIDDEN_SIZE, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
-    self.Wa = nn.Linear(2 * config.HIDDEN_SIZE, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
+    self.dense_mlp = DenseMLP(2 * config.HIDDEN_SIZE, config)
 
   def forward(self, concepts: torch.tensor):
     """
@@ -485,16 +511,15 @@ class EdgeScoring(nn.Module):
       (batch size, no of concepts, no of concepts).
     """
     batch_size, no_of_concepts, _ = concepts.shape
-    parent_representations = self.Ua(concepts)
-    child_representations = self.Wa(concepts)
-
-    parent_mat = torch.repeat_interleave(parent_representations.unsqueeze(2), no_of_concepts, dim=-2)
-    child_mat = torch.repeat_interleave(child_representations.unsqueeze(2), no_of_concepts, dim=-2)
-    child_mat = torch.transpose(child_mat, -2, -3)
-
-    # shape (batch_size, seq_len, seq_len, dense_mlp_hidden_size)
-    classifier_input = torch.tanh(parent_mat + child_mat)
-    scores = self.dense_mlp(classifier_input)
+    scores = torch.zeros((batch_size, no_of_concepts, no_of_concepts))
+    no_concepts = concepts.shape[1]
+    #TODO: think if this can be done without loops.
+    for i in range(no_concepts):
+      for j in range(no_concepts):
+        parent = concepts[:,i]
+        child = concepts[:,j]
+        score = self.dense_mlp(parent, child)
+        scores[:,i,j] = score
     return scores
 
 class HeadsSelection(nn.Module):

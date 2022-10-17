@@ -297,14 +297,12 @@ class ModelsTest(absltest.TestCase):
   def test_dense_mlp(self):
     node_repr_size = 5
     batch_size = 3
-    seq_len = 10
     cfg = get_default_config()
-    opts = ["HEAD_SELECTION.DENSE_MLP_HIDDEN_SIZE", node_repr_size]
-    cfg.merge_from_list(opts)
-    dense_mlp = DenseMLP(cfg.HEAD_SELECTION)
-    classifier_input = torch.zeros((batch_size, seq_len, seq_len, node_repr_size))
-    edge_repr = dense_mlp(classifier_input)
-    self.assertEqual(edge_repr.shape, (batch_size, seq_len, seq_len))
+    dense_mlp = DenseMLP(node_repr_size, cfg.HEAD_SELECTION)
+    parent = torch.zeros((batch_size, node_repr_size))
+    child = torch.zeros((batch_size, node_repr_size))
+    edge_repr = dense_mlp(parent, child)
+    self.assertEqual(edge_repr.shape, (batch_size,))
 
   def test_edge_scoring(self):
     batch_size = 2

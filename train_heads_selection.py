@@ -184,8 +184,6 @@ def eval_step(model: nn.Module,
   inputs_device = inputs.to(device)
   gold_adj_mat_device = gold_adj_mat.to(device)
   logits, predictions = model(inputs_device, inputs_lengths, character_inputs, character_inputs_lengths)
-  logits = logits.to(gold_adj_mat.device)
-  predictions = predictions.to(gold_adj_mat.device)
   mask = create_mask(gold_adj_mat_device, inputs_lengths, config)
   concepts_str = decode_concepts(inputs, inputs_lengths, vocabs)
   gather_logged_data(eval_logger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str)
@@ -260,8 +258,6 @@ def train_step(model: nn.Module,
   inputs_device = inputs.to(device)
   gold_adj_mat_device = gold_adj_mat.to(device)
   logits, predictions = model(inputs_device, inputs_lengths, character_inputs, character_inputs_lengths)
-  logits = logits.to(gold_adj_mat.device)
-  predictions = predictions.to(gold_adj_mat.device)
   mask = create_mask(gold_adj_mat_device, inputs_lengths, config)
   concepts_str = decode_concepts(inputs, inputs_lengths, vocabs)
   gather_logged_data(train_logger, inputs_lengths, logits, mask, gold_adj_mat, concepts_str)
@@ -399,7 +395,7 @@ def main(_):
 
   model = HeadsSelection(vocabs.concept_vocab_size, cfg.HEAD_SELECTION,
                          glove_embeddings.embeddings_vocab if FLAGS.use_glove else None).to(device)
-  optimizer = optim.Adam(model.parameters())
+  optimizer = optim.Adam(model.parameters(), lr=1e-2)
 
   #Use --logdir temp/heads_selection for tensorboard dev upload
   tensorboard_dir = 'temp/heads_selection'

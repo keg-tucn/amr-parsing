@@ -119,18 +119,27 @@ def compute_fScore(gold_outputs,
   concepts_as_list_predicted, concepts_as_list_gold = tensor_to_list(gold_outputs, predicted_outputs, eos_index,
                                                                        extended_vocab)
   f_score = 0
+  precision = 0
+  recall = 0
+  accuracy = 0
   batch_size = len(concepts_as_list_gold)
   for i in range(batch_size):
-    f_score_sentence = compute_sequence_fscore(concepts_as_list_gold[i], concepts_as_list_predicted[i])
+    f_score_sentence, precision_sentence, recall_sentence, accuracy_sentence = \
+        compute_sequence_fscore(concepts_as_list_gold[i], concepts_as_list_predicted[i])
     f_score += f_score_sentence
+    precision += precision_sentence
+    recall += recall_sentence
+    accuracy += accuracy_sentence
+
 
   f_score = f_score / batch_size
-  return f_score
+  accuracy = accuracy / batch_size
+  return f_score, precision, recall, accuracy
 
 
 def compute_sequence_fscore(gold_sequence, predicted_sequence):
   if len(predicted_sequence) == 0:
-    return 0
+    return 0, 0, 0, 0
 
   true_positive = len(set(gold_sequence) & set(predicted_sequence))
   false_positive = len(set(predicted_sequence).difference(set(gold_sequence)))
@@ -145,10 +154,15 @@ def compute_sequence_fscore(gold_sequence, predicted_sequence):
     recall = 0
   f_score = 0
 
+  if true_positive + false_negative + false_positive!= 0:
+     accuracy = true_positive / (true_positive + false_negative + false_positive)
+  else:
+     accuracy = 0
+
   if precision + recall != 0:
     f_score = 2 * (precision * recall) / (precision + recall)
 
-  return f_score
+  return f_score, precision, recall, accuracy
 
 
 def tensor_to_list(gold_outputs,
@@ -207,10 +221,11 @@ def eval_step(model: nn.Module,
               batch: Dict[str, torch.tensor],
               config: CfgNode, device):
   inputs = batch['sentence'].to(device)
-  inputs_lengths = batch['sentence_lengts'].to(device)
+  inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts'].to(device)
   character_inputs = batch["char_sentence"]
   character_inputs_lengths = batch["char_sentence_length"]
+  lemma_inputs = batch["lemma_sentence"]
 
   if config.LSTM_BASED.USE_POINTER_GENERATOR:
     unnumericalized_inputs = batch['initial_sentence']
@@ -228,21 +243,23 @@ def eval_step(model: nn.Module,
                                     extended_vocab_size, torch.as_tensor(indices),
                                     max_out_length=max_out_len,
                                     character_inputs=character_inputs,
-                                    character_inputs_lengths=character_inputs_lengths)
-    f_score = compute_fScore(gold_outputs, predictions, extended_vocab)
+                                    character_inputs_lengths=character_inputs_lengths,
+                                    lemma_inputs=lemma_inputs)
+    f_score, precision, recall, accuracy = compute_fScore(gold_outputs, predictions, extended_vocab)
   else:
     logits, predictions = model(inputs, inputs_lengths,
                                   max_out_length=max_out_len,
                                   character_inputs=character_inputs,
-                                  character_inputs_lengths=character_inputs_lengths)
+                                  character_inputs_lengths=character_inputs_lengths,
+                                  lemma_inputs=lemma_inputs)
 
-    f_score = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab)
+    f_score, precision, recall, accuracy = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab)
 
   gold_output_len = gold_outputs.shape[0]
   padded_gold_outputs = torch_pad(
     gold_outputs, (0, 0, 0, max_out_len - gold_output_len))
   loss = compute_loss(criterion, logits, padded_gold_outputs)
-  return f_score, loss
+  return f_score, loss, precision, recall, accuracy
 
 
 def evaluate_model(model: nn.Module,
@@ -255,16 +272,25 @@ def evaluate_model(model: nn.Module,
   model.eval()
   with torch.no_grad():
     epoch_f_score = 0
+    epoch_precision = 0
+    epoch_recall = 0
+    epoch_accuracy = 0
     epoch_loss = 0
     no_batches = 0
     for batch in data_loader:
-      f_score_epoch, loss = eval_step(model, criterion, max_out_len, vocabs, batch, config, device)
+      f_score_epoch, loss, precision, recall, accuracy = eval_step(model, criterion, max_out_len, vocabs, batch, config, device)
       epoch_f_score += f_score_epoch
       epoch_loss += loss
+      epoch_precision += precision
+      epoch_recall += recall
+      epoch_accuracy += accuracy
       no_batches += 1
     epoch_f_score = epoch_f_score / no_batches
+    epoch_accuracy = epoch_accuracy / no_batches
+    epoch_precision = epoch_precision / no_batches
+    epoch_recall = epoch_recall / no_batches
     epoch_loss = epoch_loss / no_batches
-    return epoch_f_score, epoch_loss
+    return epoch_f_score, epoch_loss, epoch_precision, epoch_recall, epoch_accuracy
 
 
 def train_step(model: nn.Module,
@@ -276,10 +302,11 @@ def train_step(model: nn.Module,
                device: str,
                teacher_forcing_ratio: float=0.0):
   inputs = batch['sentence'].to(device)
-  inputs_lengths = batch['sentence_lengts'].to(device)
+  inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts'].to(device)
   character_inputs = batch["char_sentence"]
   character_inputs_lengths = batch["char_sentence_length"]
+  lemma_inputs = batch["lemma_sentence"]
 
   if config.LSTM_BASED.USE_POINTER_GENERATOR:
     # initial sentence (un-numericalized)
@@ -290,24 +317,28 @@ def train_step(model: nn.Module,
   optimizer.zero_grad()
   if config.LSTM_BASED.USE_POINTER_GENERATOR:
     logits, predictions = model(inputs, inputs_lengths,
-                                    vocabs.shared_vocab_size, torch.as_tensor(indices),
-                                    teacher_forcing_ratio, gold_outputs,
+                                    extended_vocab_size = vocabs.shared_vocab_size,
+                                    indices = torch.as_tensor(indices),
+                                    teacher_forcing_ratio=teacher_forcing_ratio,
+                                    gold_output_sequence=gold_outputs,
                                     character_inputs=character_inputs,
-                                    character_inputs_lengths=character_inputs_lengths)
-    f_score = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab)
+                                    character_inputs_lengths=character_inputs_lengths,
+                                    lemma_inputs=lemma_inputs)
+    f_score, precision, recall, accuracy = compute_fScore(gold_outputs, predictions, vocabs.shared_vocab)
   else:
     logits, predictions = model(inputs, inputs_lengths,
                                 teacher_forcing_ratio=teacher_forcing_ratio,
                                 gold_output_sequence=gold_outputs,
                                 character_inputs=character_inputs,
-                                character_inputs_lengths=character_inputs_lengths)
-    f_score = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab)
+                                character_inputs_lengths=character_inputs_lengths,
+                                lemma_inputs=lemma_inputs)
+    f_score, precision, recall, accuracy = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab)
 
   loss = compute_loss(criterion, logits, gold_outputs)
   loss.backward()
   nn.utils.clip_grad_norm_(model.parameters(), 0.5)
   optimizer.step()
-  return loss, f_score
+  return loss, f_score, precision, recall, accuracy
 
 def train_model(model: nn.Module,
                 criterion: nn.Module,
@@ -332,19 +363,29 @@ def train_model(model: nn.Module,
     start_time = time.time()
     epoch_loss = 0
     no_batches = 0
+    batch_train_precision = 0
+    batch_train_recall = 0
+    batch_train_accuracy = 0
     batch_f_score_train = 0
     for batch in train_data_loader:
-        batch_loss, f_score_train = train_step(model, criterion, optimizer, batch, vocabs, config, device, teacher_forcing_ratio)
+        batch_loss, f_score_train, train_precision, train_recall, train_accuracy = \
+            train_step(model, criterion, optimizer, batch, vocabs, config, device, teacher_forcing_ratio)
         batch_f_score_train += f_score_train
         epoch_loss += batch_loss
         no_batches += 1
+        batch_train_precision += train_precision
+        batch_train_recall += train_recall
+        batch_train_accuracy += train_accuracy
     epoch_loss = epoch_loss / no_batches
     batch_f_score_train = batch_f_score_train / no_batches
+    batch_train_precision = batch_train_precision / no_batches
+    batch_train_recall = batch_train_recall / no_batches
+    batch_train_accuracy = batch_train_accuracy / no_batches
     train_end_time = time.time()
     train_time = train_end_time - start_time
     print('Training took {:.2f} seconds'.format(train_time))
     eval_start_time = time.time()
-    fscore, dev_loss = evaluate_model(
+    fscore, dev_loss, dev_precision, dev_recall, dev_accuracy = evaluate_model(
         model, criterion, max_out_len, vocabs, dev_data_loader, config, device)
     # gradually decrease the teacher_forcing_racio
     teacher_forcing_ratio -= step_teacher_forcing_ratio
@@ -355,7 +396,10 @@ def train_model(model: nn.Module,
     end_time = time.time()
     time_passed = end_time - start_time
     print('Epoch {} (took {:.2f} seconds)'.format(epoch + 1, time_passed))
-    print('Train loss: {}, dev loss: {}, f_score_train: {}, f-score: {}'.format(epoch_loss, dev_loss, batch_f_score_train, fscore))
+    print('Train loss: {}, dev loss: {}, f_score_train: {}, f-score: {} '.format(epoch_loss, dev_loss, batch_f_score_train, fscore))
+    print('Train -> Precision: {}, Recall: {}, Accuracy: {}'.format(batch_train_precision, batch_train_recall, batch_train_accuracy))
+    print('Dev -> Precision: {}, Recall: {}, Accuracy: {}'.format(dev_precision, dev_recall, dev_accuracy))
+    print(' ')
     train_writer.add_scalar('loss', epoch_loss, epoch)
     eval_writer.add_scalar('loss', dev_loss, epoch)
     eval_writer.add_scalar('f-score', fscore, epoch)
@@ -365,8 +409,8 @@ def train_model(model: nn.Module,
       scheduler.step()
 
   # Save pretrained model
-  if config.SAVE_PATH:
-    torch.save(model.state_dict(), config.SAVE_PATH)
+  # if config.SAVE_PATH:
+  torch.save(model.state_dict(), 'temp/pretrained_model_lstm.pth')
 
 
 def load_model_weights(model: nn.Module, load_path: str, component: str):
@@ -541,7 +585,7 @@ def main(_):
     cfg.merge_from_file(config_path)
     cfg.freeze()
 
-  criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
+  criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX, weight=torch.tensor(vocabs.weigthed_class).float())
   scheduler = None
 
   if FLAGS.transformer:
@@ -576,6 +620,7 @@ def main(_):
     model = Seq2seq(
       input_vocab_size,
       output_vocab_size,
+      vocabs.lemmas_vocab_size,
       concept_identification_config.LSTM_BASED,
       glove_embeddings.embeddings_vocab if FLAGS.use_glove else None,
       device=device).to(device)

@@ -49,7 +49,7 @@ def compute_smatch(gold_outputs, predictions):
   try:
     smatch_score[SmatchScore.PRECISION], smatch_score[SmatchScore.RECALL], smatch_score[SmatchScore.F_SCORE] = \
       next(score_amr_pairs(gold_file, pred_file))
-  except (AttributeError, ValueError) as e:
+  except AttributeError:
     print('Something went wrong went calculating smatch.')
 
   return smatch_score

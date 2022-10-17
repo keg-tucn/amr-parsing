@@ -6,3 +6,7 @@ smatch
 yacs
 torchtext>=0.9
 matplotlib
+nltk
+flask
+flask_restful
+flask-cors

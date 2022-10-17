@@ -5,6 +5,10 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.functional import pad as torch_pad
 
+import nltk
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import wordnet
+
 import penman
 from penman.models import noop
 from penman.surface import AlignmentMarker
@@ -24,9 +28,11 @@ BOS_IDX = 1
 AMR_ID_KEY = 'amr_id'
 SENTENCE_KEY = 'sentence'
 CHAR_SENTENCE_KEY = 'char_sentence'
+LEMMA_SENTENCE_KEY = 'lemma_sentence'
 SENTENCE_STR_KEY = 'initial_sentence'
 SENTENCE_LEN_KEY = 'sentence_lengts'
 CHAR_SENTENCE_LEN_KEY = "char_sentence_length"
+LEMMA_SENTENCE_LEN_KEY = "lemma_sentence_length"
 CONCEPTS_KEY = 'concepts'
 CHAR_CONCEPTS_KEY = 'char_concepts'
 CONCEPTS_STR_KEY = 'concepts_string'
@@ -106,7 +112,6 @@ def add_eos(training_entry: TrainingEntry, eos_token: str):
   training_entry.sentence.append(eos_token)
   training_entry.concepts.append(eos_token)
 
-# TODO: create fuction to numericalize after the ASCII code
 def numericalize_char(sentence):
   """
     Processes a sentence that is split into words into lists of integers
@@ -123,6 +128,39 @@ def numericalize_char(sentence):
   # the ord() functions return the ASCII code for each character
   char_sentance_numericalized = [[ord(char) for char in word]for word in sentence]
   return char_sentance_numericalized
+
+def pos_tagger(nltk_tag):
+  if nltk_tag.startswith('J'):
+    return wordnet.ADJ
+  elif nltk_tag.startswith('V'):
+    return wordnet.VERB
+  elif nltk_tag.startswith('N'):
+    return wordnet.NOUN
+  elif nltk_tag.startswith('R'):
+    return wordnet.ADV
+  else:
+    return None
+
+# get the sequence of lemmas from the token inputs
+def get_lemmas(tokens_sentence):
+  # find the POS tag for each token in the sentances
+  pos_tagged = nltk.pos_tag(tokens_sentence)
+  # convert the pos tag into the convention lemmas uses
+  wordnet_tagged = list(map(lambda x: (x[0], pos_tagger(x[1])), pos_tagged))
+
+  # lemmatizer
+  lemmatizer = WordNetLemmatizer()
+
+  # get the sequence of lemmas
+  lemmanize_tokens=[lemmatizer.lemmatize(word, pos=pos_tag) if pos_tag is not None else word
+                    for (word, pos_tag) in wordnet_tagged]
+  return lemmanize_tokens
+
+def numericalize_lemma(sentence, vocabs: Vocabs):
+  # Process sentence.
+  lemma_sentence = get_lemmas(sentence)
+  processed_lemma_sentence = [vocabs.get_lemmas_idx(t) for t in lemma_sentence]
+  return processed_lemma_sentence
 
 def numericalize(training_entry: TrainingEntry,
                  vocabs: Vocabs,
@@ -224,11 +262,14 @@ class AMRDataset(Dataset):
         char_sentence = numericalize_char(training_entry.sentence)
         # Numericalize the training entry concepts after each character ASCII code.
         char_concepts = numericalize_char(training_entry.concepts)
+        # Numericalize the training entry concepts after each lemma.
+        lemma_sentence = numericalize_lemma(training_entry.sentence, vocabs)
         # Collect the data.
         self.ids.append(id)
         field = {
           SENTENCE_KEY: torch.tensor(sentence, dtype=torch.long),
           CHAR_SENTENCE_KEY: char_sentence,
+          LEMMA_SENTENCE_KEY: torch.tensor(lemma_sentence, dtype=torch.long),
           SENTENCE_STR_KEY: training_entry.sentence,
           CONCEPTS_KEY: torch.tensor(concepts, dtype=torch.long),
           CHAR_CONCEPTS_KEY: char_concepts,
@@ -261,6 +302,7 @@ class AMRDataset(Dataset):
     id = self.ids[item]
     sentence = self.fields_by_id[id][SENTENCE_KEY]
     char_sentence = self.fields_by_id[id][CHAR_SENTENCE_KEY]
+    lemma_sentence = self.fields_by_id[id][LEMMA_SENTENCE_KEY]
     sentence_str = self.fields_by_id[id][SENTENCE_STR_KEY]
     concepts = self.fields_by_id[id][CONCEPTS_KEY]
     char_concepts = self.fields_by_id[id][CHAR_CONCEPTS_KEY]
@@ -268,13 +310,14 @@ class AMRDataset(Dataset):
     glove_concepts = self.fields_by_id[id][GLOVE_CONCEPTS_KEY]
     adj_mat = self.fields_by_id[id][ADJ_MAT_KEY]
     amr_str = self.fields_by_id[id][AMR_STR_KEY]
-    return id, sentence, char_sentence, sentence_str, concepts,\
+    return id, sentence, char_sentence, lemma_sentence, sentence_str, concepts,\
            char_concepts, concepts_str, glove_concepts, adj_mat, amr_str
 
   def collate_fn(self, batch):
     amr_ids = []
     batch_sentences = []
     batch_char_sentence = []
+    batch_lemma_sentence = []
     batch_sentences_strings = []
     batch_concepts = []
     batch_char_concepts = []
@@ -283,13 +326,15 @@ class AMRDataset(Dataset):
     batch_adj_mats = []
     amr_strings = []
     sentence_lengths = []
+    lemma_sentence_lengths = []
     concepts_lengths = []
     for entry in batch:
-      amr_id, sentence, char_sentence, sentence_str, concepts, \
+      amr_id, sentence, char_sentence, lemma_sentence, sentence_str, concepts, \
         char_concepts, concepts_str, glove_concepts, adj_mat, amr_str = entry
       amr_ids.append(amr_id)
       batch_sentences.append(sentence)
       batch_char_sentence.append(char_sentence)
+      batch_lemma_sentence.append(lemma_sentence)
       batch_sentences_strings.append(sentence_str)
       batch_concepts.append(concepts)
       batch_char_concepts.append(char_concepts)
@@ -298,10 +343,12 @@ class AMRDataset(Dataset):
       batch_adj_mats.append(adj_mat)
       amr_strings.append(amr_str)
       sentence_lengths.append(len(sentence))
+      lemma_sentence_lengths.append(len(lemma_sentence))
       concepts_lengths.append(len(concepts))
     # Get max lengths for padding.
     max_sen_len = max([len(s) for s in batch_sentences])
     max_char_sen_len = max([len(word) for s in batch_char_sentence for word in s])
+    max_lemma_sen_len = max([len(s) for s in batch_lemma_sentence])
     max_char_concepts_len = max([len(word) for s in batch_char_concepts for word in s])
     max_sen_str_len = max([len(s) for s in batch_sentences_strings])
     max_concepts_len = max([len(s) for s in batch_concepts])
@@ -315,6 +362,8 @@ class AMRDataset(Dataset):
     # Pad sentences.
     padded_sentences = [
       torch_pad(s, (0, max_sen_len - len(s))) for s in batch_sentences]
+    padded_lemma = [
+      torch_pad(s, (0, max_lemma_sen_len - len(s))) for s in batch_lemma_sentence]
 
     # Pad char sentences.
     padded_char_sentences = pad_char_sequence(batch_char_sentence, max_sen_len, max_char_sen_len)
@@ -343,10 +392,12 @@ class AMRDataset(Dataset):
       new_batch = {
         SENTENCE_KEY: torch.transpose(torch.stack(padded_sentences), 0, 1).to(self.device),
         CHAR_SENTENCE_KEY: torch.transpose(torch.tensor(padded_char_sentences), 0, 2).to(self.device),
+        LEMMA_SENTENCE_KEY: torch.transpose(torch.stack(padded_lemma), 0, 1).to(self.device),
         # This is left on the cpu for 'pack_padded_sequence'.
         SENTENCE_STR_KEY: padded_initial_sentences,
         SENTENCE_LEN_KEY: torch.tensor(sentence_lengths),
         CHAR_SENTENCE_LEN_KEY: torch.transpose(torch.tensor(char_sentence_lengths), 0, 1),
+        LEMMA_SENTENCE_LEN_KEY: torch.tensor(lemma_sentence_lengths),
         CONCEPTS_KEY: torch.transpose(torch.stack(padded_concepts), 0, 1).to(self.device),
         CONCEPTS_STR_KEY: padded_concepts_string
         }

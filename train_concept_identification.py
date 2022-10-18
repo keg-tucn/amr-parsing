@@ -223,9 +223,9 @@ def eval_step(model: nn.Module,
   inputs = batch['sentence'].to(device)
   inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts'].to(device)
-  character_inputs = batch["char_sentence"]
+  character_inputs = batch["char_sentence"].to(device)
   character_inputs_lengths = batch["char_sentence_length"]
-  lemma_inputs = batch["lemma_sentence"]
+  lemma_inputs = batch["lemma_sentence"].to(device)
 
   if config.LSTM_BASED.USE_POINTER_GENERATOR:
     unnumericalized_inputs = batch['initial_sentence']
@@ -304,9 +304,9 @@ def train_step(model: nn.Module,
   inputs = batch['sentence'].to(device)
   inputs_lengths = batch['sentence_lengts']
   gold_outputs = batch['concepts'].to(device)
-  character_inputs = batch["char_sentence"]
+  character_inputs = batch["char_sentence"].to(device)
   character_inputs_lengths = batch["char_sentence_length"]
-  lemma_inputs = batch["lemma_sentence"]
+  lemma_inputs = batch["lemma_sentence"].to(device)
 
   if config.LSTM_BASED.USE_POINTER_GENERATOR:
     # initial sentence (un-numericalized)
@@ -334,6 +334,8 @@ def train_step(model: nn.Module,
                                 lemma_inputs=lemma_inputs)
     f_score, precision, recall, accuracy = compute_fScore(gold_outputs, predictions, vocabs.concept_vocab)
 
+  logitsDevice = logits.to(device)
+  criterionDevice = criterion.to(device)
   loss = compute_loss(criterion, logits, gold_outputs)
   loss.backward()
   nn.utils.clip_grad_norm_(model.parameters(), 0.5)
@@ -585,7 +587,7 @@ def main(_):
     cfg.merge_from_file(config_path)
     cfg.freeze()
 
-  criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX, weight=torch.tensor(vocabs.weigthed_class).float())
+  criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
   scheduler = None
 
   if FLAGS.transformer:

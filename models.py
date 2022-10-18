@@ -367,7 +367,7 @@ class Decoder(nn.Module):
     else:
       output_seq_len = max_out_length
     encoder_states = encoder_output[0]
-     batch_size = encoder_states.shape[1]
+    batch_size = encoder_states.shape[1]
     # Create the initial decoder state by passing the last encoder state
     # through a linear layer.
     decoder_state = self.compute_initial_decoder_state(encoder_output[1])

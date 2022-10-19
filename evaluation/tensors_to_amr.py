@@ -3,20 +3,17 @@ from typing import List
 import torch
 import random
 
-from data_pipeline.vocab import Vocabs
-
 NO_VAR = '_'
 
 def tensors_to_lists(concepts: torch.tensor,
                      concepts_length: torch.tensor,
                      adj_mat: torch.tensor,
-                     vocabs: Vocabs):
+                     concept_vocab):
   """
   Args:
     concepts: Concept sequence (max seq len).
     concepts_length: Concept sequence length scalar.
-    adj_mat (torch.tensor): Adj matrix (with 0s and 1s) showing if there is
-      an edge or not between concepts, shape (max len, max len).
+    adj_mat (torch.tensor): Adj matrix; shape (max len, max len).
     vocabs: Vocabs object (the 3 vocabs).
 
   Returns:
@@ -33,8 +30,8 @@ def tensors_to_lists(concepts: torch.tensor,
   if(len(root_indexes.tolist()) == 1):
     root_idx = int(root_indexes[0])
   if(len(root_indexes.tolist()) > 1):
-    chosen_index = random.randrange(len(root_indexes.tolist()))
-    root_idx = int(root_indexes[chosen_index])
+    # chosen_index = random.randrange(len(root_indexes.tolist()))
+    root_idx = int(root_indexes[0])
   # Remove fake root
   concepts_no_fake_root = concepts_no_padding[1:]
   adj_mat_no_fake_root = adj_mat_no_padding[1:,1:]
@@ -43,7 +40,7 @@ def tensors_to_lists(concepts: torch.tensor,
   concepts_as_list = concepts_no_fake_root.tolist()
   adj_mat_as_list = adj_mat_no_fake_root.tolist()
   # Un-numericalize concepts.
-  ids_to_concepts_list = list(vocabs.concept_vocab.keys())
+  ids_to_concepts_list = list(concept_vocab.keys())
   concepts_as_list = [ids_to_concepts_list[id] for id in concepts_as_list]
   return root_idx, concepts_as_list, adj_mat_as_list
 
@@ -79,13 +76,15 @@ def generate_variables(concepts: List[str]):
 
 def generate_amr_str_rec(root: int, seen_nodes: List[int], depth,
                          concepts: List[str], concepts_var: List[str], adj_mat: List[List[int]],
-                         relation_label: str):
+                         labels: List[str], unk_relation_label: str):
 
   amr_str = "( {} / {} ".format(concepts_var[root], concepts[root])
   no_concepts = len(concepts)
   has_children = False
   for i in range(no_concepts):
-    if adj_mat[root][i] != 0:
+    relation_id = adj_mat[root][i]
+    if relation_id != 0:
+      relation_label = labels[relation_id] if unk_relation_label is None else unk_relation_label
       has_children = True
       # If there is an edge i is a child node.
       # Check if it's a constant or a node with variable.
@@ -102,7 +101,7 @@ def generate_amr_str_rec(root: int, seen_nodes: List[int], depth,
             seen_nodes.append(i)
             rec_repr = generate_amr_str_rec(i, seen_nodes, depth+1,
                                             concepts, concepts_var, adj_mat,
-                                            relation_label)
+                                            labels, unk_relation_label)
             child_representation = "{} {}".format(relation_label, rec_repr)
           else:
             child_representation = ''
@@ -111,59 +110,68 @@ def generate_amr_str_rec(root: int, seen_nodes: List[int], depth,
   amr_str += ")"
   return amr_str
 
-def get_unlabelled_amr_str_from_tensors(concepts: torch.tensor,
-                                        concepts_length: torch.tensor,
-                                        adj_mat: torch.tensor,
-                                        vocabs: Vocabs,
-                                        unk_rel_label: str):
+def get_amr_str_from_tensors(concepts: torch.tensor,
+                             concepts_length: torch.tensor,
+                             adj_mat: torch.tensor,
+                             concept_vocab,
+                             relation_vocab,
+                             unk_rel_label: str):
   """
   Args:
     concepts: Concept sequence (max seq len).
     concepts_length: Concept sequence length scalar.
-    adj_mat (torch.tensor): Adj matrix showing if there is an edge (value !=0)
-    or not (value == 0) between concepts; shape (max len, max len).
-    unk_rel_label: label that will be put on edges (cause this is the
-      unlabelled setting).
+    adj_mat (torch.tensor): Adj matrix; shape (max len, max len).
+    unk_rel_label: label that will be put on edges
+      (in the unlabelled setting).
   """
   # Post-processing (don't allow self edges)
   max_seq_len = adj_mat.shape[1]
-  mask = torch.eye(max_seq_len, max_seq_len, dtype=bool)
+  mask = torch.eye(max_seq_len, max_seq_len, dtype=bool).to(adj_mat.device)
   adj_mat.masked_fill_(mask, 0)
 
   root_idx, concepts_as_list, adj_mat_as_list = tensors_to_lists(
-    concepts, concepts_length, adj_mat, vocabs)
+    concepts, concepts_length, adj_mat, concept_vocab)
   concepts_var = generate_variables(concepts_as_list)
+  relation_vocab = relation_vocab
+  labels = list(relation_vocab.keys())
   amr_str = generate_amr_str_rec(
       root_idx, seen_nodes=[root_idx], depth=1,
       concepts=concepts_as_list, concepts_var=concepts_var,
       adj_mat=adj_mat_as_list,
-      relation_label=unk_rel_label)
+      labels=labels,
+      unk_relation_label=unk_rel_label)
   return amr_str
 
-def get_unlabelled_amr_strings_from_tensors(concepts: torch.tensor,
-                                            concepts_lengths: torch.tensor,
-                                            adj_mats: torch.tensor,
-                                            vocabs: Vocabs,
-                                            unk_rel_label: str):
+def get_amr_strings_from_tensors(concepts: torch.tensor,
+                                 concepts_lengths: torch.tensor,
+                                 adj_mats: torch.tensor,
+                                 concept_vocab,
+                                 relation_vocab,
+                                 unk_rel_label: str):
   """
+  This method creates a labelled or unlabelled AMR, depending on the value
+  given to the unk_rel_label variable:
+    - None: labelled AMR.
+    - otherwise: unlabelled, using the given value for all the
+                 arc labels in the AMR.
   Args:
       concepts: Batch of concept sequences (max seq len, batch size).
       concepts_lengths: Batch of sequences lentgths (batch size).
-      adj_mats (torch.tensor): Batch of adj matrices (with 0s and 1s) showing if
-        there is an edge or not between concepts, with shape
-        (batch size, max seq len, max seq len).
-      unk_rel_label: label that will be put on edges (cause this is the
-        unlabelled setting).
+      adj_mats (torch.tensor): Batch of adj matrices (batch size, max seq len, max seq len):
+        - unlabelled AMR: binary adj mats.
+        - labelled AMR: adj mats with label indices.
+      unk_rel_label: label that will be put on edges for unlabelled AMR.
 
-  Returns: batch of unlabelled AMR strings
+  Returns: batch of (un)labelled AMR strings
   """
-  unlabelled_amrs = []
+  amrs = []
   batch_size = concepts.shape[1]
   for batch in range(batch_size):
-    amr_string = get_unlabelled_amr_str_from_tensors(concepts[:,batch],
-                                                     concepts_lengths[batch],
-                                                     adj_mats[batch],
-                                                     vocabs,
-                                                     unk_rel_label)
-    unlabelled_amrs.append(amr_string)
-  return unlabelled_amrs
+    amr_string = get_amr_str_from_tensors(concepts[:,batch],
+                                          concepts_lengths[batch],
+                                          adj_mats[batch],
+                                          concept_vocab,
+                                          relation_vocab,
+                                          unk_rel_label)
+    amrs.append(amr_string)
+  return amrs

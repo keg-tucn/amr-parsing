@@ -2,7 +2,7 @@ from absl.testing import absltest
 import torch
 
 from models import CharacterLevelEmbedding, Encoder, AdditiveAttention, DecoderStep, Decoder, Seq2seq
-from models import DenseMLP, EdgeScoring, HeadsSelection
+from models import DenseMLP, EdgeScoring, RelationIdentification
 from yacs.config import CfgNode
 from config import get_default_config
 
@@ -295,28 +295,30 @@ class ModelsTest(absltest.TestCase):
 
 
   def test_dense_mlp(self):
-    node_repr_size = 5
-    batch_size = 3
+    no_labels = 5
     cfg = get_default_config()
-    dense_mlp = DenseMLP(node_repr_size, cfg.HEAD_SELECTION)
-    parent = torch.zeros((batch_size, node_repr_size))
-    child = torch.zeros((batch_size, node_repr_size))
-    edge_repr = dense_mlp(parent, child)
-    self.assertEqual(edge_repr.shape, (batch_size,))
+    dense_mlp = DenseMLP(no_labels, cfg.RELATION_IDENTIFICATION)
+    classifier_input = torch.zeros((no_labels, cfg.RELATION_IDENTIFICATION.DENSE_MLP_HIDDEN_SIZE))
+    edge_repr, arc_repr = dense_mlp(classifier_input)
+    self.assertEqual(edge_repr.shape, (no_labels,))
 
   def test_edge_scoring(self):
     batch_size = 2
     no_of_concepts = 3
+    no_labels = 5
     cfg = get_default_config()
-    hidden_size = cfg.HEAD_SELECTION.HIDDEN_SIZE
+    hidden_size = cfg.RELATION_IDENTIFICATION.HIDDEN_SIZE
     concepts = torch.zeros((batch_size, no_of_concepts, 2*hidden_size))
-    edge_scoring = EdgeScoring(cfg.HEAD_SELECTION)
-    scores = edge_scoring(concepts)
+    edge_scoring = EdgeScoring(no_labels, cfg.RELATION_IDENTIFICATION)
+    scores, label_scores = edge_scoring(concepts)
     self.assertEqual(scores.shape, (batch_size, no_of_concepts, no_of_concepts))
+    self.assertEqual(label_scores.shape, (batch_size, no_of_concepts, no_of_concepts, no_labels))
 
   def test_heads_selection_eval(self):
     batch_size = 2
     concept_vocab_size = 10
+    relation_vocab_size = 50
+    lemmas_vocab_size = 10
     seq_len = 3
     cfg = get_default_config()
     concepts = [
@@ -328,9 +330,10 @@ class ModelsTest(absltest.TestCase):
     concepts = torch.tensor(concepts)
     concepts = concepts.transpose(0,1)
     concepts_lengths = torch.tensor([3, 2])
-    head_selection = HeadsSelection(concept_vocab_size, cfg.HEAD_SELECTION)
-    head_selection.eval()
-    scores, predictions = head_selection(concepts, concepts_lengths)
+    relation_identification = RelationIdentification(concept_vocab_size, relation_vocab_size, lemmas_vocab_size,
+                                            cfg.RELATION_IDENTIFICATION)
+    relation_identification.eval()
+    scores, predictions, rel_scores, rel_predictions = relation_identification(concepts, concepts_lengths)
     self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
     self.assertEqual(predictions.shape, (batch_size, seq_len, seq_len))
 
@@ -352,12 +355,14 @@ class ModelsTest(absltest.TestCase):
                              [0, 1, 1]]]
     expected_predictions = torch.tensor(expected_predictions)
 
-    predictions = HeadsSelection.get_predictions(scores, 0.5)
+    predictions = RelationIdentification.get_predictions(scores, 0.5)
     self.assertTrue(torch.equal(expected_predictions, predictions))
 
   def test_heads_selection_train(self):
     batch_size = 2
     concept_vocab_size = 10
+    relation_vocab_size = 50
+    lemmas_vocab_size = 10
     seq_len = 3
     cfg = get_default_config()
     concepts = [
@@ -369,9 +374,10 @@ class ModelsTest(absltest.TestCase):
     concepts = torch.tensor(concepts)
     concepts = concepts.transpose(0,1)
     concepts_lengths = torch.tensor([3, 2])
-    head_selection = HeadsSelection(concept_vocab_size, cfg.HEAD_SELECTION)
-    head_selection.train()
-    scores, predictions = head_selection(concepts, concepts_lengths)
+    relation_identification = RelationIdentification(concept_vocab_size, relation_vocab_size, lemmas_vocab_size,
+                                            cfg.RELATION_IDENTIFICATION)
+    relation_identification.train()
+    scores, predictions, rel_scores, rel_predictions = relation_identification(concepts, concepts_lengths)
     self.assertEqual(scores.shape, (batch_size, seq_len, seq_len))
     self.assertEqual(predictions.shape, (batch_size, seq_len, seq_len))
 

@@ -538,11 +538,12 @@ class RelationIdentification(nn.Module):
   """
 
   def __init__(self, concept_vocab_size, relation_vocab_size,
+               lemmas_vocab_size,
                # config RELATION_IDENTIFICATION
                config: CfgNode,
                glove_embeddings: Dict=None):
     super(RelationIdentification, self).__init__()
-    self.encoder = Encoder(concept_vocab_size, config,
+    self.encoder = Encoder(concept_vocab_size, lemmas_vocab_size, config,
                            use_bilstm=True, glove_embeddings=glove_embeddings)
     self.edge_scoring = EdgeScoring(relation_vocab_size, config)
     self.config = config

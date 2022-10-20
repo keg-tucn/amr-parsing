@@ -52,14 +52,16 @@ class CharacterLevelEmbedding(nn.Module):
 class Encoder(nn.Module):
 
 
-  def __init__(self, input_vocab_size, config: CfgNode, use_bilstm=False, glove_embeddings: Dict=None):
+  def __init__(self, input_vocab_size, lemmas_vocab_size, config: CfgNode, use_bilstm=False, glove_embeddings: Dict=None):
     super(Encoder, self).__init__()
     self.embedding = nn.Embedding(input_vocab_size, config.EMB_DIM)
+    self.lemma_embedding = nn.Embedding(lemmas_vocab_size, config.LEMMA_EMB_DIM)
     self.use_glove = config.GLOVE_EMB_DIM != 0 and glove_embeddings is not None
     self.use_trainable_embeddings = config.EMB_DIM != 0
     # If config.CHAR_EMB_DIM = 0, then the CharacterEmbedding will not be used char_emb from config.
     self.use_character_level_embeddings = config.CHAR_EMB_DIM != 0
     self.drop_out = config.ENCODER_DROPOUT_RATE
+    self.use_lemma = config.LEMMA_EMB_DIM != 0
     if self.use_glove:
       self.glove = nn.Embedding(len(glove_embeddings.keys()), config.GLOVE_EMB_DIM)
       weight_matrix = get_weight_matrix(glove_embeddings, config.GLOVE_EMB_DIM)
@@ -73,8 +75,11 @@ class Encoder(nn.Module):
     elif self.use_character_level_embeddings:
       emb_dim += config.CHAR_HIDDEN_SIZE
 
+    if self.use_lemma:
+      emb_dim += config.LEMMA_EMB_DIM
     if self.use_trainable_embeddings:
       emb_dim += config.EMB_DIM
+
     self.lstm = nn.LSTM(
       emb_dim, config.HIDDEN_SIZE, config.NUM_LAYERS,
       bidirectional=use_bilstm, dropout=config.ENCODER_DROPOUT_RATE)
@@ -82,7 +87,8 @@ class Encoder(nn.Module):
       self.character_level_embeddings = CharacterLevelEmbedding(config)
 
   def forward(self, inputs: torch.Tensor, input_lengths: torch.Tensor,
-              character_inputs: torch.Tensor=None, character_inputs_lengths: torch.Tensor=None):
+              character_inputs: torch.Tensor=None, character_inputs_lengths: torch.Tensor=None,
+              lemma_inputs: torch.Tensor=None):
     """
     Args:
         inputs (torch.Tensor): Inputs (input seq len, batch size).
@@ -99,21 +105,36 @@ class Encoder(nn.Module):
       input_lengths field, regardless of what the length with padding actually
       is.
     """
+    # word trained embbedings
     embedded_inputs = self.embedding(inputs) if self.use_trainable_embeddings else None
+    # GloVe embbedings
     if self.use_glove and self.use_trainable_embeddings:
       glove_embedded_inputs = self.glove(inputs)
       embedded_inputs = torch.cat((embedded_inputs, glove_embedded_inputs), dim=-1)
     if self.use_glove and not self.use_trainable_embeddings:
       embedded_inputs = self.glove(inputs)
-    if self.use_character_level_embeddings:
+    # Character Level embbedings
+    if self.use_character_level_embeddings and embedded_inputs != None:
       # compute character level embeddings
       character_embedded_inputs = self.character_level_embeddings(character_inputs, character_inputs_lengths)
       # concatenate embedded_inputs with character level embeddings on the last dimention
       embedded_inputs = torch.cat((embedded_inputs, character_embedded_inputs), dim=-1)
+    if self.use_character_level_embeddings  and embedded_inputs == None:
+      embedded_inputs = self.character_level_embeddings(character_inputs, character_inputs_lengths)
+
+    # Lemma embbedings
+    if self.use_lemma and embedded_inputs != None:
+      # compute character level embeddings
+      lemma_embedded_inputs = self.lemma_embedding(lemma_inputs)
+      embedded_inputs = torch.cat((embedded_inputs, lemma_embedded_inputs), dim=-1)
+    if self.use_lemma and embedded_inputs == None:
+      embedded_inputs = self.embedding(lemma_inputs)
+
     if self.training:
       # Add dropout to lstm input.
       dropout = nn.Dropout(p=self.drop_out)
       embedded_inputs = dropout(embedded_inputs)
+
     #TODO: see if enforce_sorted would help to be True (eg efficiency).
     packed_embedded = nn.utils.rnn.pack_padded_sequence(
       embedded_inputs, input_lengths, enforce_sorted = False)
@@ -386,12 +407,14 @@ class Seq2seq(nn.Module):
   def __init__(self,
                input_vocab_size: int,
                output_vocab_size: int,
+               lemmas_vocab_size: int,
                # config CONCEPT_IDENTIFICATION.LSTM_BASED
                config: CfgNode,
                glove_embeddings: Dict = None,
                device="cpu"):
     super(Seq2seq, self).__init__()
-    self.encoder = Encoder(input_vocab_size, config, glove_embeddings=glove_embeddings)
+    self.encoder = Encoder(input_vocab_size, lemmas_vocab_size, config, glove_embeddings=glove_embeddings)
+    print("output_vocab_size ", output_vocab_size)
     self.decoder = Decoder(output_vocab_size, config, device=device)
     self.device = device
     if config.USE_POINTER_GENERATOR:
@@ -413,7 +436,8 @@ class Seq2seq(nn.Module):
               gold_output_sequence: torch.Tensor = None,
               max_out_length: int = None,
               character_inputs: torch.Tensor=None,
-              character_inputs_lengths: torch.Tensor=None):
+              character_inputs_lengths: torch.Tensor=None,
+              lemma_inputs: torch.Tensor=None):
     """Forward seq2seq.
 
     Args:
@@ -429,9 +453,9 @@ class Seq2seq(nn.Module):
       predictions of shape (out seq len, batch size, output no of classes).
     """
     if self.use_character_level_embeddings:
-      encoder_output = self.encoder(input_sequence, input_lengths, character_inputs, character_inputs_lengths)
+      encoder_output = self.encoder(input_sequence, input_lengths, character_inputs, character_inputs_lengths, lemma_inputs)
     else:
-      encoder_output = self.encoder(input_sequence, input_lengths)
+      encoder_output = self.encoder(input_sequence, input_lengths, lemma_inputs=lemma_inputs)
     input_seq_len = input_sequence.shape[0]
     attention_mask = self.create_mask(input_lengths, input_seq_len)
     indices = indices.to(device=self.device) if indices is not None else None
@@ -514,11 +538,12 @@ class RelationIdentification(nn.Module):
   """
 
   def __init__(self, concept_vocab_size, relation_vocab_size,
+               lemmas_vocab_size,
                # config RELATION_IDENTIFICATION
                config: CfgNode,
                glove_embeddings: Dict=None):
     super(RelationIdentification, self).__init__()
-    self.encoder = Encoder(concept_vocab_size, config,
+    self.encoder = Encoder(concept_vocab_size, lemmas_vocab_size, config,
                            use_bilstm=True, glove_embeddings=glove_embeddings)
     self.edge_scoring = EdgeScoring(relation_vocab_size, config)
     self.config = config

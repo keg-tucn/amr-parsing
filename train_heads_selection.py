@@ -477,6 +477,7 @@ def main(_):
     cfg.freeze()
 
   model = RelationIdentification(vocabs.concept_vocab_size, vocabs.relation_vocab_size,
+                                 vocabs.lemmas_vocab_size,
                                  cfg.RELATION_IDENTIFICATION,
                                  glove_embeddings.embeddings_vocab if FLAGS.use_glove else None).to(device)
   optimizer = optim.Adam(model.parameters())

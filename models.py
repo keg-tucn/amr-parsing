@@ -473,32 +473,39 @@ class DenseMLP(nn.Module):
   MLP from Dependency parsing as Head Selection.
   """
 
-  def __init__(self,
-               node_repr_size:int,
-               config: CfgNode):
+  def __init__(self, no_labels: int, config: CfgNode):
     super(DenseMLP, self).__init__()
-    self.Ua = nn.Linear(node_repr_size, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
-    self.Wa = nn.Linear(node_repr_size, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
+    self.no_labels = no_labels
     self.va = nn.Linear(config.DENSE_MLP_HIDDEN_SIZE, 1, bias=False)
+    self.label_classifier = nn.Linear(config.DENSE_MLP_HIDDEN_SIZE, no_labels, bias=False)
+    self.heads_selection = config.HEADS_SELECTION
+    self.arcs_labelling = config.ARCS_LABELLING
 
 
-  def forward(self, parent: torch.Tensor, child: torch.Tensor):
+  def forward(self, classifier_input):
     """
     Args:
-        parent: Parent node representation (batch size, node repr size).
-        child: Child node representation (batch size, node repr size).
+        classifier_input: arc representation of Dense MLP hidden size for each
+          concept pair; shape (batch_size, seq_len, seq_len, dense_mlp_hidden_size)
     Returns
-      edge_score: (batch size).
+      edge_score: (batch size, seq_len, seq_len).
+      label_score: (batch size, no labels).
     """
-    edge_score = self.va(torch.tanh(self.Ua(parent) + self.Wa(child)))
+    batch_size = classifier_input.shape[0]
+    edge_score = self.va(classifier_input) if self.heads_selection else torch.zeros((batch_size, 1))
+    label_score = self.label_classifier(classifier_input) if self.arcs_labelling else torch.zeros(
+      (batch_size, self.no_labels))
     # Return score of (batch size), not (batch size, 1).
-    return edge_score[:,0]
+    return edge_score.squeeze(-1), label_score
 
 class EdgeScoring(nn.Module):
 
-  def __init__(self, config: CfgNode):
+  def __init__(self, no_labels: int, config: CfgNode):
     super(EdgeScoring, self).__init__()
-    self.dense_mlp = DenseMLP(2 * config.HIDDEN_SIZE, config)
+    self.dense_mlp = DenseMLP(no_labels, config)
+    self.no_labels = no_labels
+    self.Ua = nn.Linear(2 * config.HIDDEN_SIZE, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
+    self.Wa = nn.Linear(2 * config.HIDDEN_SIZE, config.DENSE_MLP_HIDDEN_SIZE, bias=False)
 
   def forward(self, concepts: torch.tensor):
     """
@@ -511,32 +518,33 @@ class EdgeScoring(nn.Module):
       (batch size, no of concepts, no of concepts).
     """
     batch_size, no_of_concepts, _ = concepts.shape
-    scores = torch.zeros((batch_size, no_of_concepts, no_of_concepts))
-    no_concepts = concepts.shape[1]
-    #TODO: think if this can be done without loops.
-    for i in range(no_concepts):
-      for j in range(no_concepts):
-        parent = concepts[:,i]
-        child = concepts[:,j]
-        score = self.dense_mlp(parent, child)
-        scores[:,i,j] = score
-    return scores
+    parent_representations = self.Ua(concepts)
+    child_representations = self.Wa(concepts)
 
-class HeadsSelection(nn.Module):
+    parent_mat = torch.repeat_interleave(parent_representations.unsqueeze(2), no_of_concepts, dim=-2)
+    child_mat = torch.repeat_interleave(child_representations.unsqueeze(2), no_of_concepts, dim=-2)
+    child_mat = torch.transpose(child_mat, -2, -3)
+
+    # shape (batch_size, seq_len, seq_len, dense_mlp_hidden_size)
+    classifier_input = torch.tanh(parent_mat + child_mat)
+    scores, label_scores = self.dense_mlp(classifier_input)
+    return scores, label_scores
+
+class RelationIdentification(nn.Module):
   """
   Module for training heads selection separately.
   The input is a list of numericalized concepts & the output is a matrix of
   edge scores.
   """
 
-  def __init__(self, concept_vocab_size,
-               # config HEAD_SELECTION
+  def __init__(self, concept_vocab_size, relation_vocab_size,
+               # config RELATION_IDENTIFICATION
                config: CfgNode,
                glove_embeddings: Dict=None):
-    super(HeadsSelection, self).__init__()
+    super(RelationIdentification, self).__init__()
     self.encoder = Encoder(concept_vocab_size, config,
                            use_bilstm=True, glove_embeddings=glove_embeddings)
-    self.edge_scoring = EdgeScoring(config)
+    self.edge_scoring = EdgeScoring(relation_vocab_size, config)
     self.config = config
 
   @staticmethod
@@ -566,6 +574,7 @@ class HeadsSelection(nn.Module):
     """
     encoded_concepts, _ = self.encoder(concepts, concepts_lengths, character_inputs, character_inputs_lengths)
     encoded_concepts = encoded_concepts.transpose(0,1)
-    scores = self.edge_scoring(encoded_concepts)
+    scores, label_scores = self.edge_scoring(encoded_concepts)
     predictions = self.get_predictions(scores, self.config.EDGE_THRESHOLD)
-    return scores, predictions
+    label_predictions = torch.argmax(label_scores, dim=-1)
+    return scores, predictions, label_scores, label_predictions

@@ -3,6 +3,7 @@ import io
 
 from enum import Enum
 from smatch import score_amr_pairs
+from data_pipeline.vocab import Vocabs
 
 
 class SmatchScore(Enum):
@@ -140,3 +141,63 @@ def calc_edges_scores(gold_mat: torch.tensor, predictions: torch.tensor, inputs_
     precision = precision / index
     accuracy = accuracy / index
     return f_score, precision, recall, accuracy
+
+
+def compute_multiclass_f_score(golds, preds, rel_dictionary, no_rels):
+    '''
+    Params:
+        golds: gold adjacency matrix
+        preds: boolean adjacency matrix of the predictions
+    Returns:
+        f_score, precision and recall between the expected relations (gold)
+        and the actual predictions (preds)
+    '''
+    f_score = 0
+    precision = 0
+    recall = 0
+    for relation in rel_dictionary.values():
+        rel_gold_mat = (golds == relation).view(-1)
+        rel_pred_mat = (preds == relation).view(-1)
+        rel_f_score, rel_precision, rel_recall = compute_f_score(rel_gold_mat, rel_pred_mat)
+        f_score += rel_f_score
+        precision += rel_precision
+        recall += rel_recall
+
+    f_score = f_score / no_rels
+    precision = precision / no_rels
+    recall = recall / no_rels
+
+    return f_score, precision, recall
+
+def calc_labels_scores(gold_mat: torch.Tensor, predictions: torch.Tensor, inputs_lengths: torch.Tensor, vocabs: Vocabs,
+                       device):
+    '''
+    Params:
+        gold_mat: gold adjacency matrix with indexes for labels
+        predictions: adjacency matrix of the predictions
+        inputs_lengths: length of the sequence for each example
+        vocabs: for dictionary to decode labels from indexes to strings
+    Returns:
+        F_score, precision and recall
+        between unpadded gold data and actual label predictions
+    '''
+    rel_dictionary = vocabs.relation_vocab
+    no_rels = vocabs.relation_vocab_size
+    index = 0
+    f_score = 0
+    precision = 0
+    recall = 0
+    for example in range(inputs_lengths.shape[0]):
+        sentence_len = inputs_lengths[index].item()
+        gold_edges = gold_mat[index][:sentence_len, :sentence_len].to(device)
+        pred_edges = predictions[index][:sentence_len, :sentence_len].to(device)
+        aux_f_score, aux_precision, aux_recall = compute_multiclass_f_score(
+            gold_edges, pred_edges, rel_dictionary, no_rels)
+        f_score += aux_f_score
+        precision += aux_precision
+        recall += aux_recall
+        index += 1
+    f_score = f_score / index
+    recall = recall / index
+    precision = precision / index
+    return f_score, precision, recall

@@ -32,6 +32,13 @@ from yacs.config import CfgNode
 from torchtext.datasets import WikiText2
 from torchtext.data.utils import get_tokenizer
 
+import logging
+logger = logging.getLogger("penman")
+for handler in logger.handlers.copy():
+    logger.removeHandler(handler)
+logger.addHandler(logging.NullHandler())
+logger.propagate = False
+
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('config',
